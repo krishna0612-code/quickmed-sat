@@ -1,32 +1,105 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
-const Profile = ({ profileData, setShowProfileImageUpload }) => {
+const Profile = ({ profileData: initialProfileData, setShowProfileImageUpload, setProfileData: setParentProfileData }) => {
   const [fieldErrors, setFieldErrors] = useState({});
   const [activeEditField, setActiveEditField] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [profileData, setProfileData] = useState(initialProfileData || {});
   const [formData, setFormData] = useState({
     // Personal Information
-    fullName: profileData.fullName,
-    email: profileData.email,
-    phone: profileData.phone,
-    currentLocation: profileData.currentLocation,
-    vehicleType: profileData.vehicleType,
-    vehicleNumber: profileData.vehicleNumber,
+    fullName: initialProfileData?.fullName || '',
+    email: initialProfileData?.email || '',
+    phone: initialProfileData?.phone || '',
+    currentLocation: initialProfileData?.currentLocation || '',
+    vehicleType: initialProfileData?.vehicleType || '',
+    vehicleNumber: initialProfileData?.vehicleNumber || '',
     
     // Emergency Contacts
-    emergencyContact1Name: profileData.emergencyContact1Name || '',
-    emergencyContact1Phone: profileData.emergencyContact1Phone || '',
-    emergencyContact1Relation: profileData.emergencyContact1Relation || '',
-    emergencyContact2Name: profileData.emergencyContact2Name || '',
-    emergencyContact2Phone: profileData.emergencyContact2Phone || '',
-    emergencyContact2Relation: profileData.emergencyContact2Relation || '',
+    emergencyContact1Name: initialProfileData?.emergencyContact1Name || '',
+    emergencyContact1Phone: initialProfileData?.emergencyContact1Phone || '',
+    emergencyContact1Relation: initialProfileData?.emergencyContact1Relation || '',
+    emergencyContact2Name: initialProfileData?.emergencyContact2Name || '',
+    emergencyContact2Phone: initialProfileData?.emergencyContact2Phone || '',
+    emergencyContact2Relation: initialProfileData?.emergencyContact2Relation || '',
     
     // Bank Details
-    bankAccountNumber: profileData.bankAccountNumber || '',
-    bankAccountHolder: profileData.bankAccountHolder || '',
-    bankName: profileData.bankName || '',
-    ifscCode: profileData.ifscCode || '',
-    upiId: profileData.upiId || ''
+    bankAccountNumber: initialProfileData?.bankAccountNumber || '',
+    bankAccountHolder: initialProfileData?.bankAccountHolder || '',
+    bankName: initialProfileData?.bankName || '',
+    ifscCode: initialProfileData?.ifscCode || '',
+    upiId: initialProfileData?.upiId || ''
   });
+
+  // Fetch profile data from backend on component mount
+  useEffect(() => {
+    fetchProfileData();
+  }, []);
+
+  // Update formData when profileData changes
+  useEffect(() => {
+    if (profileData) {
+      setFormData({
+        fullName: profileData.fullName || '',
+        email: profileData.email || '',
+        phone: profileData.phone || '',
+        currentLocation: profileData.currentLocation || '',
+        vehicleType: profileData.vehicleType || '',
+        vehicleNumber: profileData.vehicleNumber || '',
+        emergencyContact1Name: profileData.emergencyContact1Name || '',
+        emergencyContact1Phone: profileData.emergencyContact1Phone || '',
+        emergencyContact1Relation: profileData.emergencyContact1Relation || '',
+        emergencyContact2Name: profileData.emergencyContact2Name || '',
+        emergencyContact2Phone: profileData.emergencyContact2Phone || '',
+        emergencyContact2Relation: profileData.emergencyContact2Relation || '',
+        bankAccountNumber: profileData.bankAccountNumber || '',
+        bankAccountHolder: profileData.bankAccountHolder || '',
+        bankName: profileData.bankName || '',
+        ifscCode: profileData.ifscCode || '',
+        upiId: profileData.upiId || ''
+      });
+    }
+  }, [profileData]);
+
+  // Fetch profile data from backend
+  const fetchProfileData = async () => {
+    try {
+      let token = localStorage.getItem('token');
+      
+      // Clean token - remove any quotes or whitespace
+      if (token) {
+        token = token.replace(/^["']|["']$/g, '').trim();
+      }
+      
+      if (!token) {
+        console.error('No token found');
+        return;
+      }
+
+      const response = await fetch('http://127.0.0.1:8000/delivery/profile/', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setProfileData(data);
+        if (setParentProfileData) {
+          setParentProfileData(data);
+        }
+      } else if (response.status === 401 || response.status === 403) {
+        console.error('Authentication failed. Token may be expired.');
+        // Clear invalid token
+        localStorage.removeItem('token');
+      } else {
+        console.error('Failed to fetch profile:', response.statusText);
+      }
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+    }
+  };
 
   const styles = {
     mainContent: {
@@ -345,14 +418,96 @@ const Profile = ({ profileData, setShowProfileImageUpload }) => {
     setActiveEditField(field);
   };
 
-  const handleFieldSave = (field) => {
+  const handleFieldSave = async (field) => {
     const isValid = validateField(field, formData[field]);
-    if (isValid) {
-      setActiveEditField(null);
-      // Update the profile data in real-time
-      profileData[field] = formData[field];
-      console.log(`Field ${field} saved:`, formData[field]);
-      // Here you would typically send the data to your backend for this specific field
+    if (!isValid) {
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      let token = localStorage.getItem('token');
+      
+      // Clean token - remove any quotes or whitespace
+      if (token) {
+        token = token.replace(/^["']|["']$/g, '').trim();
+      }
+      
+      if (!token) {
+        setFieldErrors(prev => ({
+          ...prev,
+          [field]: 'Please login again. No authentication token found.'
+        }));
+        setIsSaving(false);
+        return;
+      }
+
+      // Map frontend field names to backend field names
+      const updateData = {
+        [field]: formData[field]
+      };
+
+      const response = await fetch('http://127.0.0.1:8000/delivery/profile/', {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updateData)
+      });
+
+      if (response.ok) {
+        const updatedData = await response.json();
+        // Update local state
+        setProfileData(updatedData);
+        if (setParentProfileData) {
+          setParentProfileData(updatedData);
+        }
+        setActiveEditField(null);
+        // Clear any previous errors
+        setFieldErrors(prev => {
+          const newErrors = { ...prev };
+          delete newErrors[field];
+          return newErrors;
+        });
+        console.log(`Field ${field} saved successfully`);
+      } else {
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          errorData = { error: `Server returned ${response.status}: ${response.statusText}` };
+        }
+        console.error('Failed to save field:', errorData);
+        
+        // Handle authentication errors specifically
+        let errorMessage = 'Failed to save. Please try again.';
+        if (response.status === 401 || response.status === 403) {
+          errorMessage = 'Session expired. Please login again.';
+          // Optionally redirect to login or clear token
+          localStorage.removeItem('token');
+        } else if (errorData.detail) {
+          errorMessage = errorData.detail;
+        } else if (errorData[field] && Array.isArray(errorData[field])) {
+          errorMessage = errorData[field][0];
+        } else if (errorData.error) {
+          errorMessage = errorData.error;
+        }
+        
+        setFieldErrors(prev => ({
+          ...prev,
+          [field]: errorMessage
+        }));
+      }
+    } catch (error) {
+      console.error('Error saving field:', error);
+      const errorMessage = error.message || 'Network error. Please check your connection and try again.';
+      setFieldErrors(prev => ({
+        ...prev,
+        [field]: errorMessage
+      }));
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -599,13 +754,15 @@ const Profile = ({ profileData, setShowProfileImageUpload }) => {
                 style={{...styles.iconButton, ...styles.saveIcon}}
                 onClick={() => handleFieldSave(field)}
                 title="Save"
+                disabled={isSaving}
               >
-                ✓
+                {isSaving ? '...' : '✓'}
               </button>
               <button
                 style={{...styles.iconButton, ...styles.cancelIcon}}
                 onClick={() => handleFieldCancel(field)}
                 title="Cancel"
+                disabled={isSaving}
               >
                 ✕
               </button>
@@ -667,13 +824,15 @@ const Profile = ({ profileData, setShowProfileImageUpload }) => {
                 style={{...styles.iconButton, ...styles.saveIcon}}
                 onClick={() => handleFieldSave(field)}
                 title="Save"
+                disabled={isSaving}
               >
-                ✓
+                {isSaving ? '...' : '✓'}
               </button>
               <button
                 style={{...styles.iconButton, ...styles.cancelIcon}}
                 onClick={() => handleFieldCancel(field)}
                 title="Cancel"
+                disabled={isSaving}
               >
                 ✕
               </button>
@@ -729,13 +888,15 @@ const Profile = ({ profileData, setShowProfileImageUpload }) => {
                 style={{...styles.iconButton, ...styles.saveIcon}}
                 onClick={() => handleFieldSave(field)}
                 title="Save"
+                disabled={isSaving}
               >
-                ✓
+                {isSaving ? '...' : '✓'}
               </button>
               <button
                 style={{...styles.iconButton, ...styles.cancelIcon}}
                 onClick={() => handleFieldCancel(field)}
                 title="Cancel"
+                disabled={isSaving}
               >
                 ✕
               </button>

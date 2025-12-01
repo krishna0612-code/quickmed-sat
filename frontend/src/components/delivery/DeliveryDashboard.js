@@ -57,29 +57,164 @@ const DeliveryDashboard = ({ user, onLogout }) => {
     return `DA-${timestamp}-${randomStr}`.toUpperCase();
   };
 
-  // Initialize profile data
+  // Helper function to get user data (handles both camelCase and snake_case)
+  const getUserData = () => {
+    if (!user) {
+      // Try to get from localStorage
+      const savedUser = localStorage.getItem('currentUser');
+      if (savedUser) {
+        try {
+          return JSON.parse(savedUser);
+        } catch (e) {
+          return null;
+        }
+      }
+      return null;
+    }
+    return user;
+  };
+
+  // Get user data
+  const userData = getUserData();
+  
+  // Extract user info (handle both camelCase and snake_case from API)
+  const getUserName = () => {
+    return userData?.fullName || userData?.full_name || userData?.name || '';
+  };
+  
+  const getUserEmail = () => {
+    return userData?.email || '';
+  };
+  
+  const getUserPhone = () => {
+    const phone = userData?.phone || '';
+    // Remove +91 prefix if present, we'll add it in display
+    return phone.replace(/^\+91\s*/, '').trim();
+  };
+
+  // Initialize profile data with user credentials from login/signup
   const [profileData, setProfileData] = useState({
     agentId: generateAgentId(),
-    fullName: user?.fullName || 'Saketi Adarsh',
-    email: user?.email || 'saketiadarsh79@gmail.com',
-    phone: user?.phone || '+91 73829 70467',
-    address: 'A Square buildings',
-    city: 'Vishakapatanam',
-    pincode: '532458',
+    fullName: getUserName(),
+    email: getUserEmail(),
+    phone: getUserPhone(),
+    address: '',
+    city: '',
+    pincode: '',
     dateOfBirth: '',
-    age: '45',
+    age: '',
     gender: '',
-    currentLocation: 'Sector 18, Noida',
-    vehicleType: 'Motorcycle',
-    vehicleNumber: 'DL01AB1234',
-    joinedDate: '2023-05-24',
-    totalDeliveries: 1245,
-    rating: 5.0,
-    completionRate: '99%',
-    averageRating: 4.9,
-    responseTime: '9 mins',
-    profileImage: null
+    currentLocation: '',
+    vehicleType: '',
+    vehicleNumber: '',
+    joinedDate: new Date().toISOString().split('T')[0],
+    totalDeliveries: 0,
+    rating: 0,
+    completionRate: '0%',
+    averageRating: 0,
+    responseTime: '',
+    profileImage: null,
+    // Emergency contacts
+    emergencyContact1Name: '',
+    emergencyContact1Phone: '',
+    emergencyContact1Relation: '',
+    emergencyContact2Name: '',
+    emergencyContact2Phone: '',
+    emergencyContact2Relation: '',
+    // Bank details
+    bankAccountNumber: '',
+    bankAccountHolder: '',
+    bankName: '',
+    ifscCode: '',
+    upiId: ''
   });
+
+  // Fetch profile data from backend on component mount and when user changes
+  useEffect(() => {
+    // Helper functions to get user data
+    const getUserData = () => {
+      if (!user) {
+        const savedUser = localStorage.getItem('currentUser');
+        if (savedUser) {
+          try {
+            return JSON.parse(savedUser);
+          } catch (e) {
+            return null;
+          }
+        }
+        return null;
+      }
+      return user;
+    };
+
+    const userData = getUserData();
+    const getUserName = () => userData?.fullName || userData?.full_name || userData?.name || '';
+    const getUserEmail = () => userData?.email || '';
+    const getUserPhone = () => {
+      const phone = userData?.phone || '';
+      return phone.replace(/^\+91\s*/, '').trim();
+    };
+
+    // Update profile with user credentials immediately
+    setProfileData(prev => ({
+      ...prev,
+      fullName: getUserName() || prev.fullName,
+      email: getUserEmail() || prev.email,
+      phone: getUserPhone() || prev.phone
+    }));
+
+    const fetchProfileData = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          console.error('No token found');
+          return;
+        }
+
+        const response = await fetch('http://127.0.0.1:8000/delivery/profile/', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          // Merge backend data with user credentials (prioritize backend data, but use user data as fallback)
+          setProfileData(prev => ({
+            ...prev,
+            ...data,
+            // Ensure name, email, phone come from user if not in backend response
+            fullName: data.fullName || prev.fullName || getUserName(),
+            email: data.email || prev.email || getUserEmail(),
+            phone: data.phone || prev.phone || getUserPhone(),
+            // Keep other fields from backend or use existing
+            agentId: data.agentId || prev.agentId,
+            address: data.address || prev.address,
+            city: data.city || prev.city,
+            pincode: data.pincode || prev.pincode,
+            dateOfBirth: data.dateOfBirth || prev.dateOfBirth,
+            age: data.age || prev.age,
+            gender: data.gender || prev.gender
+          }));
+        } else {
+          console.error('Failed to fetch profile:', response.statusText);
+          // If fetch fails, ensure we still have user credentials
+          setProfileData(prev => ({
+            ...prev,
+            fullName: prev.fullName || getUserName(),
+            email: prev.email || getUserEmail(),
+            phone: prev.phone || getUserPhone()
+          }));
+        }
+      } catch (error) {
+        console.error('Error fetching profile:', error);
+      }
+    };
+
+    fetchProfileData();
+  }, [user]);
 
   // Enhanced delivery data with pending orders
   const [deliveryData, setDeliveryData] = useState({
@@ -520,7 +655,7 @@ const DeliveryDashboard = ({ user, onLogout }) => {
       case 'performance':
         return <Performance {...commonProps} />;
       case 'profile':
-        return <Profile {...commonProps} />;
+        return <Profile {...commonProps} setProfileData={setProfileData} />;
       default:
         return <Dashboard {...commonProps} />;
     }

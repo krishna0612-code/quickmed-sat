@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 
 const ProfileImageUpload = ({ currentImage, onImageChange, onCancel }) => {
   const [previewUrl, setPreviewUrl] = useState(currentImage);
+  const [selectedFile, setSelectedFile] = useState(null);
   const fileInputRef = useRef(null);
 
   const styles = {
@@ -152,6 +153,8 @@ const ProfileImageUpload = ({ currentImage, onImageChange, onCancel }) => {
         return;
       }
 
+      setSelectedFile(file);
+      
       const reader = new FileReader();
       reader.onload = (e) => {
         setPreviewUrl(e.target.result);
@@ -160,15 +163,55 @@ const ProfileImageUpload = ({ currentImage, onImageChange, onCancel }) => {
     }
   };
 
-  const handleSave = () => {
-    if (previewUrl && previewUrl !== currentImage) {
-      onImageChange(previewUrl);
+  const handleSave = async () => {
+    if (!selectedFile) {
+      onCancel();
+      return;
     }
-    onCancel();
+
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('No authentication token found');
+        return;
+      }
+
+      // Create FormData with the actual file
+      const formData = new FormData();
+      formData.append('profile_image', selectedFile);
+
+      const uploadResponse = await fetch('http://127.0.0.1:8000/delivery/profile/image/', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (uploadResponse.ok) {
+        const data = await uploadResponse.json();
+        // The backend returns the full URL
+        const imageUrl = data.profileImage.startsWith('http') 
+          ? data.profileImage 
+          : `http://127.0.0.1:8000${data.profileImage}`;
+        onImageChange(imageUrl);
+        onCancel();
+      } else {
+        const errorData = await uploadResponse.json();
+        alert('Failed to upload image: ' + (errorData.detail || errorData.profile_image?.[0] || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      alert('Failed to upload image. Please try again.');
+    }
   };
 
   const handleRemove = () => {
     setPreviewUrl(null);
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   return (
