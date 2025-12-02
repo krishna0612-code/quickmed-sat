@@ -4,7 +4,7 @@
 
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
-from .models import CustomUser, UserProfile, VendorProfile, DeliveryProfile
+from .models import CustomUser, UserProfile, VendorProfile, DeliveryProfile, CartItem, Order
 
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -96,5 +96,57 @@ class VendorProfileSerializer(serializers.ModelSerializer):
         
         # Call parent to_internal_value for validation
         return super().to_internal_value(converted_data)
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CartItem
+        fields = ['id', 'medicine_id', 'medicine_name', 'medicine_price', 'vendor', 'category', 'quantity']
+        read_only_fields = ['id']
     
+    def to_representation(self, instance):
+        return {
+            'id': instance.medicine_id,
+            'name': instance.medicine_name,
+            'price': float(instance.medicine_price),
+            'vendor': instance.vendor,
+            'category': instance.category,
+            'quantity': instance.quantity
+        }
+
+
+class OrderSerializer(serializers.ModelSerializer):
+    vendor_id = serializers.IntegerField(source='vendor.id', read_only=True)
+    vendor_name = serializers.CharField(source='vendor.full_name', read_only=True)
+    
+    class Meta:
+        model = Order
+        fields = [
+            'id', 'order_id', 'status', 'delivery_type', 'customer_name', 
+            'customer_phone', 'delivery_address', 'items', 'total_amount', 
+            'payment_id', 'prescription_required', 'created_at', 'updated_at', 
+            'order_date', 'vendor_id', 'vendor_name'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'order_date']
+    
+    def to_representation(self, instance):
+        # Convert to frontend format
+        data = super().to_representation(instance)
+        return {
+            'id': data['order_id'],
+            'orderId': data['order_id'],
+            'status': data['status'],
+            'deliveryType': data['delivery_type'],
+            'customerName': data['customer_name'],
+            'customerPhone': data['customer_phone'],
+            'address': data['delivery_address'],
+            'items': data['items'],
+            'total': float(data['total_amount']),
+            'paymentId': data['payment_id'],
+            'prescriptionRequired': data['prescription_required'],
+            'orderTime': instance.created_at.strftime('%Y-%m-%d %H:%M'),
+            'date': data['order_date'],
+            'vendorId': data['vendor_id'],
+            'vendorName': data['vendor_name']
+        }
 

@@ -486,6 +486,7 @@ const UserDashboardContent = ({ user, onLogout }) => {
           name: med.name,
           price: parseFloat(med.price) || 0,
           vendor: med.vendor || 'Unknown Vendor',
+          vendorId: med.vendorId || null,  // Include vendor ID for order creation
           category: med.category || 'General',
           description: med.description || `${med.name} - ${med.category}`,
           prescriptionRequired: med.prescriptionRequired || false,
@@ -586,34 +587,233 @@ const UserDashboardContent = ({ user, onLogout }) => {
     profilePhotoInputRef.current?.click();
   };
 
+  // Get user-specific localStorage key for cart
+  const getCartStorageKey = () => {
+    try {
+      const currentUser = localStorage.getItem('currentUser');
+      if (currentUser) {
+        const user = JSON.parse(currentUser);
+        const userIdentifier = user.email || user.id || user.user_id || 'anonymous';
+        return `userCart_${userIdentifier}`;
+      }
+    } catch (e) {
+      console.error('Error getting user identifier:', e);
+    }
+    return 'userCart_anonymous';
+  };
+
+  // Fetch cart from backend API
+  const fetchCart = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      // If no token, try to load from localStorage
+      const storageKey = getCartStorageKey();
+      const savedCart = localStorage.getItem(storageKey);
+      if (savedCart) {
+        try {
+          setCart(JSON.parse(savedCart));
+        } catch (e) {
+          console.error('Error parsing saved cart:', e);
+          setCart([]);
+        }
+      } else {
+        setCart([]);
+      }
+      return;
+    }
+
+    try {
+      const cleanedToken = token.replace(/^"|"$/g, '').trim();
+      const response = await fetch('http://127.0.0.1:8000/users/cart/', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cleanedToken}`
+        }
+      });
+
+      if (response.ok) {
+        const cartData = await response.json();
+        console.log('Cart fetched from API:', cartData);
+        setCart(cartData);
+        // Also save to localStorage as backup
+        const storageKey = getCartStorageKey();
+        localStorage.setItem(storageKey, JSON.stringify(cartData));
+      } else {
+        console.error('Failed to fetch cart:', response.status);
+        // Fallback to localStorage
+        const storageKey = getCartStorageKey();
+        const savedCart = localStorage.getItem(storageKey);
+        if (savedCart) {
+          try {
+            setCart(JSON.parse(savedCart));
+          } catch (e) {
+            setCart([]);
+          }
+        } else {
+          setCart([]);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching cart:', error);
+      // Fallback to localStorage
+      const storageKey = getCartStorageKey();
+      const savedCart = localStorage.getItem(storageKey);
+      if (savedCart) {
+        try {
+          setCart(JSON.parse(savedCart));
+        } catch (e) {
+          setCart([]);
+        }
+      } else {
+        setCart([]);
+      }
+    }
+  }, []);
+
+  // Fetch cart on component mount
+  useEffect(() => {
+    fetchCart();
+  }, [fetchCart]);
+
   // Cart functions
-  const addToCart = (medicine) => {
+  const addToCart = async (medicine) => {
     const existingItem = cart.find(item => item.id === medicine.id);
+    const newQuantity = existingItem ? existingItem.quantity + 1 : 1;
+    
+    // Update local state immediately for UI responsiveness
     if (existingItem) {
       setCart(cart.map(item => 
         item.id === medicine.id 
-          ? { ...item, quantity: item.quantity + 1 }
+          ? { ...item, quantity: item.quantity + 1, vendorId: medicine.vendorId || item.vendorId }
           : item
       ));
     } else {
-      setCart([...cart, { ...medicine, quantity: 1 }]);
+      setCart([...cart, { ...medicine, quantity: 1, vendorId: medicine.vendorId || null }]);
     }
+
+    // Save to localStorage
+    const storageKey = getCartStorageKey();
+    const updatedCart = existingItem 
+      ? cart.map(item => item.id === medicine.id ? { ...item, quantity: item.quantity + 1 } : item)
+      : [...cart, { ...medicine, quantity: 1 }];
+    localStorage.setItem(storageKey, JSON.stringify(updatedCart));
+
+    // Save to backend if authenticated
+    const token = localStorage.getItem('token');
+    if (token) {
+      try {
+        const cleanedToken = token.replace(/^"|"$/g, '').trim();
+        const response = await fetch('http://127.0.0.1:8000/users/cart/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cleanedToken}`
+          },
+          body: JSON.stringify({
+            medicine_id: medicine.id,
+            id: medicine.id,
+            name: medicine.name,
+            price: medicine.price,
+            vendor: medicine.vendor || 'Unknown Vendor',
+            vendorId: medicine.vendorId || null,
+            category: medicine.category || 'General',
+            quantity: newQuantity
+          })
+        });
+
+        if (response.ok) {
+          const savedItem = await response.json();
+          // Update with backend response
+          if (existingItem) {
+            setCart(cart.map(item => item.id === medicine.id ? savedItem : item));
+          } else {
+            setCart([...cart, savedItem]);
+          }
+          // Update localStorage with backend data
+          const finalCart = existingItem 
+            ? cart.map(item => item.id === medicine.id ? savedItem : item)
+            : [...cart, savedItem];
+          localStorage.setItem(storageKey, JSON.stringify(finalCart));
+        }
+      } catch (error) {
+        console.error('Error saving cart to backend:', error);
+        // Keep local state and localStorage as is
+      }
+    }
+
     addNotification('Medicine Added', `${medicine.name} added to cart`, 'order');
   };
 
-  const removeFromCart = (medicineId) => {
-    setCart(cart.filter(item => item.id !== medicineId));
+  const removeFromCart = async (medicineId) => {
+    // Update local state immediately
+    const updatedCart = cart.filter(item => item.id !== medicineId);
+    setCart(updatedCart);
+
+    // Save to localStorage
+    const storageKey = getCartStorageKey();
+    localStorage.setItem(storageKey, JSON.stringify(updatedCart));
+
+    // Delete from backend if authenticated
+    const token = localStorage.getItem('token');
+    if (token) {
+      try {
+        const cleanedToken = token.replace(/^"|"$/g, '').trim();
+        await fetch(`http://127.0.0.1:8000/users/cart/${medicineId}/`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cleanedToken}`
+          }
+        });
+      } catch (error) {
+        console.error('Error removing cart item from backend:', error);
+      }
+    }
   };
 
-  const updateQuantity = (medicineId, newQuantity) => {
+  const updateQuantity = async (medicineId, newQuantity) => {
     if (newQuantity === 0) {
       removeFromCart(medicineId);
-    } else {
-      setCart(cart.map(item => 
-        item.id === medicineId 
-          ? { ...item, quantity: newQuantity }
-          : item
-      ));
+      return;
+    }
+
+    // Update local state immediately
+    const updatedCart = cart.map(item => 
+      item.id === medicineId 
+        ? { ...item, quantity: newQuantity }
+        : item
+    );
+    setCart(updatedCart);
+
+    // Save to localStorage
+    const storageKey = getCartStorageKey();
+    localStorage.setItem(storageKey, JSON.stringify(updatedCart));
+
+    // Update backend if authenticated
+    const token = localStorage.getItem('token');
+    if (token) {
+      try {
+        const cleanedToken = token.replace(/^"|"$/g, '').trim();
+        const response = await fetch(`http://127.0.0.1:8000/users/cart/${medicineId}/`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cleanedToken}`
+          },
+          body: JSON.stringify({ quantity: newQuantity })
+        });
+
+        if (response.ok) {
+          const updatedItem = await response.json();
+          // Update with backend response
+          const finalCart = cart.map(item => item.id === medicineId ? updatedItem : item);
+          setCart(finalCart);
+          localStorage.setItem(storageKey, JSON.stringify(finalCart));
+        }
+      } catch (error) {
+        console.error('Error updating cart item in backend:', error);
+      }
     }
   };
 
@@ -898,24 +1098,153 @@ const UserDashboardContent = ({ user, onLogout }) => {
       
       if (verificationResponse.success) {
         const orderId = `ORD${Date.now()}`;
-        const newOrder = {
-          id: orderId,
-          date: new Date().toISOString().split('T')[0],
-          items: [...cart],
-          total: getTotalPrice(),
-          status: 'Confirmed',
-          deliveryAddress: profile?.address || 'Address not provided',
-          paymentId: paymentResponse.razorpay_payment_id,
-          trackingAvailable: true,
-          deliveryPartner: {
-            name: 'Rahul Kumar',
-            phone: '+91 9876543210',
-            estimatedTime: '30 min'
-          }
-        };
         
-        setOrders(prevOrders => [newOrder, ...prevOrders]);
+        // Get vendor ID from first cart item (assuming all items are from same vendor)
+        let vendorId = null;
+        if (cart.length > 0) {
+          // Try to get vendorId from cart item
+          vendorId = cart[0].vendorId;
+          // If not in cart, try to find from medicines list
+          if (!vendorId) {
+            const medicine = medicines.find(m => m.id === cart[0].id);
+            if (medicine && medicine.vendorId) {
+              vendorId = medicine.vendorId;
+            }
+          }
+        }
+        
+        if (!vendorId) {
+          console.error('Vendor ID not found. Cannot create order.');
+          alert('Error: Vendor information not found. Please try again.');
+          setPaymentLoading(false);
+          return;
+        }
+        
+        // Prepare order items for backend
+        const orderItems = cart.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          medicine_id: item.id
+        }));
+        
+        // Check if prescription is required
+        const prescriptionRequired = cart.some(item => item.prescriptionRequired);
+        
+        // Save order to backend
+        const token = localStorage.getItem('token');
+        if (token) {
+          try {
+            const cleanedToken = token.replace(/^"|"$/g, '').trim();
+            const orderData = {
+              vendor_id: vendorId,
+              delivery_type: 'home',
+              customer_name: profile?.fullName || user?.fullName || 'Customer',
+              customer_phone: profile?.phone || user?.phone || '',
+              delivery_address: profile?.address || 'Address not provided',
+              items: orderItems,
+              total_amount: getTotalPrice(),
+              payment_id: paymentResponse.razorpay_payment_id,
+              prescription_required: prescriptionRequired
+            };
+            
+            const response = await fetch('http://127.0.0.1:8000/users/orders/', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${cleanedToken}`
+              },
+              body: JSON.stringify(orderData)
+            });
+            
+            if (response.ok) {
+              const savedOrder = await response.json();
+              console.log('Order saved to backend:', savedOrder);
+              
+              // Use saved order data
+              const newOrder = {
+                id: savedOrder.id || orderId,
+                orderId: savedOrder.orderId || orderId,
+                date: savedOrder.date || new Date().toISOString().split('T')[0],
+                items: savedOrder.items || [...cart],
+                total: savedOrder.total || getTotalPrice(),
+                status: savedOrder.status === 'pending' ? 'Confirmed' : savedOrder.status,
+                deliveryAddress: savedOrder.address || profile?.address || 'Address not provided',
+                paymentId: savedOrder.paymentId || paymentResponse.razorpay_payment_id,
+                trackingAvailable: true,
+                vendorId: savedOrder.vendorId,
+                vendorName: savedOrder.vendorName || 'Local Pharmacy'
+              };
+              
+              setOrders(prevOrders => [newOrder, ...prevOrders]);
+            } else {
+              const errorText = await response.text();
+              console.error('Failed to save order to backend:', errorText);
+              // Still create local order even if backend save fails
+              const newOrder = {
+                id: orderId,
+                date: new Date().toISOString().split('T')[0],
+                items: [...cart],
+                total: getTotalPrice(),
+                status: 'Confirmed',
+                deliveryAddress: profile?.address || 'Address not provided',
+                paymentId: paymentResponse.razorpay_payment_id,
+                trackingAvailable: true
+              };
+              setOrders(prevOrders => [newOrder, ...prevOrders]);
+            }
+          } catch (error) {
+            console.error('Error saving order to backend:', error);
+            // Still create local order
+            const newOrder = {
+              id: orderId,
+              date: new Date().toISOString().split('T')[0],
+              items: [...cart],
+              total: getTotalPrice(),
+              status: 'Confirmed',
+              deliveryAddress: profile?.address || 'Address not provided',
+              paymentId: paymentResponse.razorpay_payment_id,
+              trackingAvailable: true
+            };
+            setOrders(prevOrders => [newOrder, ...prevOrders]);
+          }
+        } else {
+          // No token - create local order only
+          const newOrder = {
+            id: orderId,
+            date: new Date().toISOString().split('T')[0],
+            items: [...cart],
+            total: getTotalPrice(),
+            status: 'Confirmed',
+            deliveryAddress: profile?.address || 'Address not provided',
+            paymentId: paymentResponse.razorpay_payment_id,
+            trackingAvailable: true
+          };
+          setOrders(prevOrders => [newOrder, ...prevOrders]);
+        }
+        
+        // Clear cart after successful order
         setCart([]);
+        const storageKey = getCartStorageKey();
+        localStorage.setItem(storageKey, JSON.stringify([]));
+        
+        // Clear cart from backend
+        if (token) {
+          try {
+            const cleanedToken = token.replace(/^"|"$/g, '').trim();
+            for (const item of cart) {
+              await fetch(`http://127.0.0.1:8000/users/cart/${item.id}/`, {
+                method: 'DELETE',
+                headers: {
+                  'Authorization': `Bearer ${cleanedToken}`
+                }
+              });
+            }
+          } catch (error) {
+            console.error('Error clearing cart from backend:', error);
+          }
+        }
+        
         safeSetActiveView('orders');
         
         addNotification('Order Confirmed', `Your order ${orderId} has been placed successfully`, 'order');
@@ -963,16 +1292,71 @@ const UserDashboardContent = ({ user, onLogout }) => {
     addToCart(medicine);
   };
 
+  // Fetch orders from backend
+  const fetchOrders = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      // If no token, use initial orders
+      const ordersData = initialOrders();
+      setOrders(ordersData);
+      return;
+    }
+
+    try {
+      const cleanedToken = token.replace(/^"|"$/g, '').trim();
+      const response = await fetch('http://127.0.0.1:8000/users/orders/my/', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cleanedToken}`
+        }
+      });
+
+      if (response.ok) {
+        const ordersData = await response.json();
+        console.log('Orders fetched from API:', ordersData);
+        
+        // Map backend format to frontend format
+        const formattedOrders = ordersData.map(order => ({
+          id: order.id || order.orderId,
+          orderId: order.orderId || order.id,
+          date: order.date || new Date(order.orderTime).toISOString().split('T')[0],
+          items: order.items || [],
+          total: order.total || 0,
+          status: order.status === 'pending' ? 'Confirmed' : order.status === 'delivered' ? 'Delivered' : order.status === 'cancelled' ? 'Cancelled' : order.status,
+          deliveryAddress: order.address || '',
+          paymentId: order.paymentId || '',
+          trackingAvailable: order.status !== 'cancelled',
+          vendorId: order.vendorId,
+          vendorName: order.vendorName || 'Local Pharmacy'
+        }));
+        
+        setOrders(formattedOrders);
+        
+        // Find trackable order
+        const trackableOrder = formattedOrders.find(order => 
+          order.trackingAvailable && (order.status === 'In Transit' || order.status === 'On the Way')
+        );
+        if (trackableOrder) {
+          setTrackingOrder(trackableOrder);
+        }
+      } else {
+        console.error('Failed to fetch orders:', response.status);
+        // Fallback to initial orders
+        const ordersData = initialOrders();
+        setOrders(ordersData);
+      }
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      // Fallback to initial orders
+      const ordersData = initialOrders();
+      setOrders(ordersData);
+    }
+  }, []);
+
   // Initialize orders and load Razorpay
   useEffect(() => {
-    const ordersData = initialOrders();
-    setOrders(ordersData);
-    const trackableOrder = ordersData.find(order => 
-      order.trackingAvailable && (order.status === 'In Transit' || order.status === 'On the Way')
-    );
-    if (trackableOrder) {
-      setTrackingOrder(trackableOrder);
-    }
+    fetchOrders();
 
     // Load Razorpay script
     const loadRazorpayScript = () => {

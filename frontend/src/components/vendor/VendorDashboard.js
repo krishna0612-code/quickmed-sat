@@ -374,12 +374,115 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
     }
   }, []);
 
-  // Initialize state - fetch medicines from API
+  // Fetch orders from backend
+  const fetchOrders = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.warn('No token found, using initial orders');
+      setOrders(initialData.orders);
+      return;
+    }
+
+    try {
+      const cleanedToken = token.replace(/^"|"$/g, '').trim();
+      console.log('Fetching orders from API...');
+      const response = await fetch('http://127.0.0.1:8000/users/orders/vendor/', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cleanedToken}`
+        }
+      });
+
+      console.log('Orders API response status:', response.status);
+
+      if (response.ok) {
+        const ordersData = await response.json();
+        console.log('Orders fetched from API:', ordersData);
+        console.log('Pending orders count:', ordersData.pending?.length || 0);
+        
+        // Backend returns orders grouped by status
+        // Map to frontend format
+        const formattedOrders = {
+          pending: (ordersData.pending || []).map(order => ({
+            id: order.id || order.orderId,
+            customerName: order.customerName,
+            customerPhone: order.customerPhone,
+            items: order.items || [],
+            total: order.total || 0,
+            orderTime: order.orderTime || new Date(order.date).toLocaleString(),
+            deliveryType: order.deliveryType || 'home',
+            address: order.address || '',
+            prescriptionRequired: order.prescriptionRequired || false
+          })),
+          ready: (ordersData.ready || []).map(order => ({
+            id: order.id || order.orderId,
+            customerName: order.customerName,
+            customerPhone: order.customerPhone,
+            items: order.items || [],
+            total: order.total || 0,
+            orderTime: order.orderTime || new Date(order.date).toLocaleString(),
+            deliveryType: order.deliveryType || 'home',
+            address: order.address || '',
+            prescriptionRequired: order.prescriptionRequired || false
+          })),
+          picked: (ordersData.picked || []).map(order => ({
+            id: order.id || order.orderId,
+            customerName: order.customerName,
+            customerPhone: order.customerPhone,
+            items: order.items || [],
+            total: order.total || 0,
+            orderTime: order.orderTime || new Date(order.date).toLocaleString(),
+            deliveryType: order.deliveryType || 'home',
+            address: order.address || '',
+            prescriptionRequired: order.prescriptionRequired || false
+          })),
+          cancelled: (ordersData.cancelled || []).map(order => ({
+            id: order.id || order.orderId,
+            customerName: order.customerName,
+            customerPhone: order.customerPhone,
+            items: order.items || [],
+            total: order.total || 0,
+            orderTime: order.orderTime || new Date(order.date).toLocaleString(),
+            deliveryType: order.deliveryType || 'home',
+            address: order.address || '',
+            prescriptionRequired: order.prescriptionRequired || false
+          }))
+        };
+        
+        console.log('Formatted orders:', formattedOrders);
+        setOrders(formattedOrders);
+      } else {
+        const errorText = await response.text();
+        console.error('Failed to fetch orders. Status:', response.status, 'Error:', errorText);
+        // Fallback to initial orders
+        setOrders(initialData.orders);
+      }
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      // Fallback to initial orders
+      setOrders(initialData.orders);
+    }
+  }, []);
+
+  // Initialize state - fetch medicines and orders from API
   useEffect(() => {
     fetchMedicines();
-    setOrders(initialData.orders);
+    fetchOrders();
     setPrescriptions(initialData.prescriptions);
-  }, [fetchMedicines]);
+  }, [fetchMedicines, fetchOrders]);
+
+  // Auto-refresh orders every 10 seconds when on orders page
+  useEffect(() => {
+    if (activePage === 'orders') {
+      const interval = setInterval(() => {
+        console.log('Auto-refreshing orders...');
+        fetchOrders();
+      }, 10000); // Refresh every 10 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [activePage, fetchOrders]);
 
   // Reset profile when user changes (different vendor logs in)
   // Use a ref to track previous user email to detect changes
@@ -963,31 +1066,63 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
   };
 
   // Order Management Functions
-  const markOrderReady = (orderId) => {
+  const updateOrderStatus = async (orderId, newStatus) => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      showNotification('Error', 'Please login again');
+      return false;
+    }
+
+    try {
+      const cleanedToken = token.replace(/^"|"$/g, '').trim();
+      const response = await fetch(`http://127.0.0.1:8000/users/orders/${orderId}/status/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cleanedToken}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      if (response.ok) {
+        console.log('Order status updated successfully, refreshing orders...');
+        // Refetch orders to get updated data
+        await fetchOrders();
+        return true;
+      } else {
+        const errorData = await response.json();
+        console.error('Failed to update order status:', errorData);
+        showNotification('Error', errorData.error || 'Failed to update order status');
+        return false;
+      }
+    } catch (error) {
+      console.error('Error updating order status:', error);
+      showNotification('Error', 'Failed to update order status. Please try again.');
+      return false;
+    }
+  };
+
+  const markOrderReady = async (orderId) => {
     const order = orders.pending.find(o => o.id === orderId);
     if (order) {
-      setOrders(prev => ({
-        ...prev,
-        pending: prev.pending.filter(o => o.id !== orderId),
-        ready: [...prev.ready, order]
-      }));
-      setSelectedOrder(null);
-      
-      if (notificationSettings.orderReady) {
-        showNotification('Order Ready', `Order ${orderId} is now ready for ${order.deliveryType === 'pickup' ? 'pickup' : 'delivery'}`);
+      const success = await updateOrderStatus(orderId, 'ready');
+      if (success) {
+        setSelectedOrder(null);
+        if (notificationSettings.orderReady) {
+          showNotification('Order Ready', `Order ${orderId} is now ready for ${order.deliveryType === 'pickup' ? 'pickup' : 'delivery'}`);
+        }
       }
     }
   };
 
-  const markOrderPicked = (orderId) => {
+  const markOrderPicked = async (orderId) => {
     const order = orders.ready.find(o => o.id === orderId);
     if (order) {
-      setOrders(prev => ({
-        ...prev,
-        ready: prev.ready.filter(o => o.id !== orderId),
-        picked: [...prev.picked, order]
-      }));
-      setSelectedOrder(null);
+      const success = await updateOrderStatus(orderId, 'picked');
+      if (success) {
+        setSelectedOrder(null);
+        showNotification('Order Picked', `Order ${orderId} has been marked as picked`);
+      }
     }
   };
 
@@ -995,16 +1130,14 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
     alert(`Printing label for order ${orderId}`);
   };
 
-  const cancelOrder = (orderId) => {
+  const cancelOrder = async (orderId) => {
     const order = orders.pending.find(o => o.id === orderId);
     if (order) {
-      setOrders(prev => ({
-        ...prev,
-        pending: prev.pending.filter(o => o.id !== orderId),
-        cancelled: [...prev.cancelled, { ...order, cancelledTime: new Date().toLocaleString() }]
-      }));
-      setSelectedOrder(null);
-      showNotification('Order Cancelled', `Order ${orderId} has been cancelled`);
+      const success = await updateOrderStatus(orderId, 'cancelled');
+      if (success) {
+        setSelectedOrder(null);
+        showNotification('Order Cancelled', `Order ${orderId} has been cancelled`);
+      }
     }
   };
 

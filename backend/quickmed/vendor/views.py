@@ -59,6 +59,7 @@ class AllMedicinesView(APIView):
             medicines_data.append({
                 **medicine_data,
                 'vendor': vendor_name,
+                'vendorId': medicine_obj.user.id,  # Add vendor ID for order creation
                 'description': f"{medicine_data['name']} - {medicine_data['category']}"
             })
         

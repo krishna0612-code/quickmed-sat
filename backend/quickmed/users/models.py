@@ -74,6 +74,75 @@ class DeliveryProfile(models.Model):
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE)
 
 
+class CartItem(models.Model):
+    """Cart items for users - persists cart data"""
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='cart_items')
+    medicine_id = models.IntegerField()
+    medicine_name = models.CharField(max_length=200)
+    medicine_price = models.DecimalField(max_digits=10, decimal_places=2)
+    vendor = models.CharField(max_length=200)
+    category = models.CharField(max_length=100, blank=True, default='')
+    quantity = models.IntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['user', 'medicine_id']
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"{self.user.email} - {self.medicine_name} (x{self.quantity})"
+
+
+class Order(models.Model):
+    """Orders placed by users"""
+    ORDER_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('ready', 'Ready'),
+        ('picked', 'Picked'),
+        ('cancelled', 'Cancelled'),
+        ('confirmed', 'Confirmed'),
+        ('delivered', 'Delivered'),
+    ]
+    
+    DELIVERY_TYPE_CHOICES = [
+        ('home', 'Home Delivery'),
+        ('pickup', 'Store Pickup'),
+    ]
+    
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='user_orders')
+    vendor = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='vendor_orders', limit_choices_to={'user_type': 'vendor'})
+    order_id = models.CharField(max_length=100, unique=True)
+    status = models.CharField(max_length=20, choices=ORDER_STATUS_CHOICES, default='pending')
+    delivery_type = models.CharField(max_length=20, choices=DELIVERY_TYPE_CHOICES, default='home')
+    
+    # Customer information
+    customer_name = models.CharField(max_length=200)
+    customer_phone = models.CharField(max_length=20)
+    delivery_address = models.TextField()
+    
+    # Order items (stored as JSON)
+    items = models.JSONField(default=list)  # List of {name, quantity, price, medicine_id}
+    
+    # Financial
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    payment_id = models.CharField(max_length=200, blank=True, null=True)
+    
+    # Flags
+    prescription_required = models.BooleanField(default=False)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    order_date = models.DateField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.order_id} - {self.customer_name} - {self.status}"
+
+
 # class DoctorProfile(models.Model):
 #     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE)
 
