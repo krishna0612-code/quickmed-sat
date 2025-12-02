@@ -342,15 +342,9 @@ const UserDashboardContent = ({ user, onLogout }) => {
   const profileRef = useRef(null);
   const profilePhotoInputRef = useRef(null);
 
-  // Mock data
-  const medicines = [
-    { id: 1, name: 'Aspirin 75mg', price: 25, vendor: 'WellCare Store', category: 'OTC', description: 'Low-dose aspirin for heart health' },
-    { id: 2, name: 'Paracetamol 500mg', price: 30, vendor: 'City Pharmacy', category: 'OTC', description: 'Effective relief from fever and pain' },
-    { id: 3, name: 'Ibuprofen 400mg', price: 35, vendor: 'HealthPlus Medicines', category: 'OTC', description: 'Anti-inflammatory pain relief' },
-    { id: 4, name: 'Vitamin C 1000mg', price: 40, vendor: 'WellCare Store', category: 'Vitamins', description: 'Immune system support' },
-    { id: 5, name: 'Amoxicillin 500mg', price: 120, vendor: 'City Pharmacy', category: 'Prescription', description: 'Antibiotic for bacterial infections' },
-    { id: 6, name: 'Blood Pressure Monitor', price: 899, vendor: 'HealthPlus Medicines', category: 'Equipment', description: 'Digital automatic monitoring' }
-  ];
+  // Medicines state - fetched from backend API
+  const [medicines, setMedicines] = useState([]);
+  const [isLoadingMedicines, setIsLoadingMedicines] = useState(false);
 
   const pharmacies = [
     { 
@@ -470,6 +464,51 @@ const UserDashboardContent = ({ user, onLogout }) => {
   const getUnreadCount = useCallback(() => {
     return notifications.filter(notif => !notif.read).length;
   }, [notifications]);
+
+  // Fetch medicines from backend API
+  const fetchMedicines = useCallback(async () => {
+    setIsLoadingMedicines(true);
+    try {
+      const response = await fetch('http://127.0.0.1:8000/vendor/medicines/all/', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const medicinesData = await response.json();
+        console.log('Medicines fetched from API:', medicinesData);
+        
+        // Map backend response to frontend format
+        const formattedMedicines = medicinesData.map(med => ({
+          id: med.id,
+          name: med.name,
+          price: parseFloat(med.price) || 0,
+          vendor: med.vendor || 'Unknown Vendor',
+          category: med.category || 'General',
+          description: med.description || `${med.name} - ${med.category}`,
+          prescriptionRequired: med.prescriptionRequired || false,
+          quantity: med.quantity || 0
+        }));
+        
+        setMedicines(formattedMedicines);
+      } else {
+        console.error('Failed to fetch medicines:', response.status);
+        setMedicines([]);
+      }
+    } catch (error) {
+      console.error('Error fetching medicines:', error);
+      setMedicines([]);
+    } finally {
+      setIsLoadingMedicines(false);
+    }
+  }, []);
+
+  // Fetch medicines on component mount
+  useEffect(() => {
+    fetchMedicines();
+  }, [fetchMedicines]);
 
   // Initialize appointment props
   const appointmentProps = MainAppointmentComponent({
