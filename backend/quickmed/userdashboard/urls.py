@@ -1,7 +1,7 @@
 from django.urls import path
-from . import views
+from .views import MyAppointmentsListView, BookAppointmentView
 
 urlpatterns = [
-    path("appointments/book/", views.book_appointment),
-    path("appointments/", views.get_appointments),
+    path("userdashboard/appointments/", MyAppointmentsListView.as_view(), name="my_appointments"),
+    path("userdashboard/appointments/book/", BookAppointmentView.as_view(), name="book_appointment"),
 ]

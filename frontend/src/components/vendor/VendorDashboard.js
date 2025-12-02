@@ -336,12 +336,50 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
     }
   }, [user]);
 
-  // Initialize state with mock data
+  // Fetch medicines from API on mount
+  const fetchMedicines = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.warn('No token found, cannot fetch medicines');
+      setStock([]);
+      return;
+    }
+
+    try {
+      const cleanedToken = token.replace(/^"|"$/g, '').trim();
+      const response = await fetch('http://127.0.0.1:8000/vendor/medicines/', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cleanedToken}`
+        }
+      });
+
+      if (response.ok) {
+        const medicines = await response.json();
+        console.log('Medicines fetched from API:', medicines);
+        // Convert backend date format (dd-mm-yyyy) to yyyy-mm-dd for HTML date input
+        const formattedMedicines = medicines.map(med => ({
+          ...med,
+          expiryDate: convertDateToInputFormat(med.expiryDate || med.expiry_date || '')
+        }));
+        setStock(formattedMedicines);
+      } else {
+        console.error('Failed to fetch medicines:', response.status);
+        setStock([]);
+      }
+    } catch (error) {
+      console.error('Error fetching medicines:', error);
+      setStock([]);
+    }
+  }, []);
+
+  // Initialize state - fetch medicines from API
   useEffect(() => {
-    setStock(initialData.stock);
+    fetchMedicines();
     setOrders(initialData.orders);
     setPrescriptions(initialData.prescriptions);
-  }, []);
+  }, [fetchMedicines]);
 
   // Reset profile when user changes (different vendor logs in)
   // Use a ref to track previous user email to detect changes
@@ -460,10 +498,66 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
     return 'Good Evening';
   };
 
+  // Helper function to convert dd-mm-yyyy to yyyy-mm-dd (for HTML date input)
+  const convertDateToInputFormat = (dateStr) => {
+    if (!dateStr) return '';
+    // If already in yyyy-mm-dd format, return as is
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return dateStr;
+    }
+    // If in dd-mm-yyyy format, convert to yyyy-mm-dd
+    if (/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) {
+      const [day, month, year] = dateStr.split('-');
+      return `${year}-${month}-${day}`;
+    }
+    return dateStr;
+  };
+
+  // Helper function to convert yyyy-mm-dd to dd-mm-yyyy (for display/API)
+  const convertDateToDisplayFormat = (dateStr) => {
+    if (!dateStr) return '';
+    // If in yyyy-mm-dd format, convert to dd-mm-yyyy
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const [year, month, day] = dateStr.split('-');
+      return `${day}-${month}-${year}`;
+    }
+    // If already in dd-mm-yyyy format, return as is
+    return dateStr;
+  };
+
+  // Helper function to format date for display in table (dd-mm-yyyy)
+  const formatDateForDisplay = (dateStr) => {
+    if (!dateStr) return '';
+    // If in yyyy-mm-dd format, convert to dd-mm-yyyy
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const [year, month, day] = dateStr.split('-');
+      return `${day}-${month}-${year}`;
+    }
+    // If already in dd-mm-yyyy format, return as is
+    return dateStr;
+  };
+
   const isLowStock = (medicine) => medicine.quantity <= medicine.minStock;
   
+  // Helper to parse date string to Date object (handles both yyyy-mm-dd and dd-mm-yyyy)
+  const parseDate = (dateStr) => {
+    if (!dateStr) return null;
+    // Try yyyy-mm-dd format first
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return new Date(dateStr);
+    }
+    // Try dd-mm-yyyy format
+    if (/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) {
+      const [day, month, year] = dateStr.split('-');
+      return new Date(`${year}-${month}-${day}`);
+    }
+    // Fallback to Date constructor
+    return new Date(dateStr);
+  };
+
   const isExpiringSoon = (medicine) => {
-    const expiryDate = new Date(medicine.expiryDate);
+    const expiryDate = parseDate(medicine.expiryDate);
+    if (!expiryDate || isNaN(expiryDate.getTime())) return false;
     const today = new Date();
     const diffTime = expiryDate - today;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -471,7 +565,8 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
   };
 
   const isExpired = (medicine) => {
-    const expiryDate = new Date(medicine.expiryDate);
+    const expiryDate = parseDate(medicine.expiryDate);
+    if (!expiryDate || isNaN(expiryDate.getTime())) return false;
     const today = new Date();
     return expiryDate < today;
   };
@@ -547,50 +642,218 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
   };
 
   // Medicine Management Functions
-  const handleAddMedicine = () => {
-    const medicine = {
-      ...newMedicine,
-      id: Math.max(...stock.map(m => m.id), 0) + 1,
+  const handleAddMedicine = async () => {
+    console.log('=== handleAddMedicine called ===');
+    console.log('newMedicine state:', newMedicine);
+    
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.error('No token found');
+      showNotification('Error', 'Please login again');
+      return;
+    }
+
+    const cleanedToken = token.replace(/^"|"$/g, '').trim();
+    console.log('Token cleaned, first 20 chars:', cleanedToken.substring(0, 20) + '...');
+
+    // Validate required fields
+    if (!newMedicine.name || !newMedicine.category || !newMedicine.expiryDate) {
+      console.error('Missing required fields:', {
+        name: !!newMedicine.name,
+        category: !!newMedicine.category,
+        expiryDate: !!newMedicine.expiryDate
+      });
+      showNotification('Error', 'Please fill in all required fields');
+      return;
+    }
+
+    // Prepare medicine data for API
+    // Send date in YYYY-MM-DD format (HTML date input already provides this)
+    // The backend serializer accepts both YYYY-MM-DD and dd-mm-yyyy, but YYYY-MM-DD is preferred
+    let expiryDateValue = newMedicine.expiryDate;
+    
+    // Ensure date is in YYYY-MM-DD format
+    if (expiryDateValue && /^\d{2}-\d{2}-\d{4}$/.test(expiryDateValue)) {
+      // If in dd-mm-yyyy format, convert to yyyy-mm-dd
+      const [day, month, year] = expiryDateValue.split('-');
+      expiryDateValue = `${year}-${month}-${day}`;
+    }
+    
+    console.log('Date format:', { original: newMedicine.expiryDate, final: expiryDateValue });
+    
+    const medicineData = {
+      name: newMedicine.name.trim(),
+      category: newMedicine.category.trim(),
       quantity: parseInt(newMedicine.quantity) || 0,
       minStock: parseInt(newMedicine.minStock) || 0,
-      price: parseFloat(newMedicine.price) || 0
+      price: parseFloat(newMedicine.price) || 0,
+      expiryDate: expiryDateValue, // Send in YYYY-MM-DD format
+      prescriptionRequired: newMedicine.prescriptionRequired || false,
+      supplier: (newMedicine.supplier || '').trim(),
+      batchNo: (newMedicine.batchNo || '').trim()
     };
-    
-    setStock(prev => [...prev, medicine]);
-    setShowAddMedicineModal(false);
-    setNewMedicine({
-      name: '',
-      category: '',
-      quantity: '',
-      minStock: '',
-      price: '',
-      expiryDate: '',
-      prescriptionRequired: false,
-      supplier: '',
-      batchNo: ''
-    });
-    
-    showNotification('Medicine Added', `${medicine.name} has been added to inventory`);
+
+    console.log('Medicine data to send:', medicineData);
+
+    try {
+      console.log('Sending POST request to:', 'http://127.0.0.1:8000/vendor/medicines/');
+      const response = await fetch('http://127.0.0.1:8000/vendor/medicines/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cleanedToken}`
+        },
+        body: JSON.stringify(medicineData)
+      });
+
+      console.log('Response status:', response.status, response.statusText);
+
+      if (response.ok) {
+        const savedMedicine = await response.json();
+        console.log('✅ Medicine saved to database:', savedMedicine);
+        
+        // Convert date format for frontend display
+        const formattedMedicine = {
+          ...savedMedicine,
+          expiryDate: convertDateToInputFormat(savedMedicine.expiryDate)
+        };
+        
+        // Update local state with the saved medicine (includes backend ID)
+        setStock(prev => [...prev, formattedMedicine]);
+        setShowAddMedicineModal(false);
+        setNewMedicine({
+          name: '',
+          category: '',
+          quantity: '',
+          minStock: '',
+          price: '',
+          expiryDate: '',
+          prescriptionRequired: false,
+          supplier: '',
+          batchNo: ''
+        });
+        
+        showNotification('Medicine Added', `${savedMedicine.name} has been added to inventory`);
+      } else {
+        let errorMessage = 'Failed to add medicine. Please try again.';
+        try {
+          const errorData = await response.json();
+          console.error('❌ Failed to save medicine. Response:', errorData);
+          console.error('Response status:', response.status);
+          
+          if (errorData.detail) {
+            errorMessage = errorData.detail;
+          } else if (errorData.error) {
+            errorMessage = typeof errorData.error === 'string' ? errorData.error : JSON.stringify(errorData.error);
+          } else if (typeof errorData === 'object') {
+            // Check for field-specific errors
+            const errorFields = Object.keys(errorData);
+            if (errorFields.length > 0) {
+              const firstError = errorData[errorFields[0]];
+              errorMessage = Array.isArray(firstError) ? firstError[0] : String(firstError);
+            }
+          }
+        } catch (parseError) {
+          console.error('Failed to parse error response:', parseError);
+          const responseText = await response.text();
+          console.error('Raw error response:', responseText);
+          errorMessage = response.statusText || `HTTP ${response.status}`;
+        }
+        
+        console.error('Final error message:', errorMessage);
+        showNotification('Error', errorMessage);
+        alert(`Error: ${errorMessage}`);
+      }
+    } catch (error) {
+      console.error('❌ Network error saving medicine:', error);
+      const errorMsg = error.message || 'Network error. Please check if the backend server is running.';
+      showNotification('Error', errorMsg);
+      alert(`Network Error: ${errorMsg}`);
+    }
   };
 
   const handleEditMedicine = (medicine) => {
-    setEditingMedicine({...medicine});
+    // Ensure date is in correct format for HTML input (yyyy-mm-dd)
+    const medicineWithFormattedDate = {
+      ...medicine,
+      expiryDate: convertDateToInputFormat(medicine.expiryDate)
+    };
+    setEditingMedicine(medicineWithFormattedDate);
     setShowEditStockModal(true);
   };
 
-  const handleUpdateStock = () => {
-    if (editingMedicine) {
-      setStock(prev => prev.map(med => 
-        med.id === editingMedicine.id ? {
-          ...editingMedicine,
-          quantity: parseInt(editingMedicine.quantity) || 0,
-          minStock: parseInt(editingMedicine.minStock) || 0,
-          price: parseFloat(editingMedicine.price) || 0
-        } : med
-      ));
-      setShowEditStockModal(false);
-      setEditingMedicine(null);
-      showNotification('Stock Updated', `${editingMedicine.name} stock has been updated`);
+  const handleUpdateStock = async () => {
+    if (!editingMedicine || !editingMedicine.id) {
+      showNotification('Error', 'Invalid medicine data');
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+    if (!token) {
+      showNotification('Error', 'Please login again');
+      return;
+    }
+
+    const cleanedToken = token.replace(/^"|"$/g, '').trim();
+
+    // Prepare update data
+    // Send date in YYYY-MM-DD format (HTML date input already provides this)
+    let expiryDateValue = editingMedicine.expiryDate;
+    
+    // Ensure date is in YYYY-MM-DD format
+    if (expiryDateValue && /^\d{2}-\d{2}-\d{4}$/.test(expiryDateValue)) {
+      // If in dd-mm-yyyy format, convert to yyyy-mm-dd
+      const [day, month, year] = expiryDateValue.split('-');
+      expiryDateValue = `${year}-${month}-${day}`;
+    }
+    
+    const updateData = {
+      name: editingMedicine.name,
+      category: editingMedicine.category,
+      quantity: parseInt(editingMedicine.quantity) || 0,
+      minStock: parseInt(editingMedicine.minStock) || 0,
+      price: parseFloat(editingMedicine.price) || 0,
+      expiryDate: expiryDateValue, // Send in YYYY-MM-DD format
+      prescriptionRequired: editingMedicine.prescriptionRequired || false,
+      supplier: editingMedicine.supplier || '',
+      batchNo: editingMedicine.batchNo || ''
+    };
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/vendor/medicines/${editingMedicine.id}/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cleanedToken}`
+        },
+        body: JSON.stringify(updateData)
+      });
+
+      if (response.ok) {
+        const updatedMedicine = await response.json();
+        console.log('Medicine updated in database:', updatedMedicine);
+        
+        // Convert date format for frontend display
+        const formattedMedicine = {
+          ...updatedMedicine,
+          expiryDate: convertDateToInputFormat(updatedMedicine.expiryDate)
+        };
+        
+        // Update local state
+        setStock(prev => prev.map(med => 
+          med.id === editingMedicine.id ? formattedMedicine : med
+        ));
+        setShowEditStockModal(false);
+        setEditingMedicine(null);
+        showNotification('Stock Updated', `${updatedMedicine.name} stock has been updated`);
+      } else {
+        const errorData = await response.json();
+        console.error('Failed to update medicine:', errorData);
+        showNotification('Error', errorData.detail || errorData.error || 'Failed to update medicine. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error updating medicine:', error);
+      showNotification('Error', 'Network error. Please try again.');
     }
   };
 
@@ -876,6 +1139,7 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
             setShowNotificationsBellModal={setShowNotificationsBellModal}
             notifications={notifications}
             setStockFilter={setStockFilter}
+            formatDateForDisplay={formatDateForDisplay}
           />
         );
       case 'orders':
@@ -951,6 +1215,7 @@ const VendorDashboard = ({ user = defaultUser, onLogout }) => {
             setShowNotificationsBellModal={setShowNotificationsBellModal}
             notifications={notifications}
             setStockFilter={setStockFilter}
+            formatDateForDisplay={formatDateForDisplay}
           />
         );
     }

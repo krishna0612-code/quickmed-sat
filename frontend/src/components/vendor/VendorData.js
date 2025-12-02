@@ -14,68 +14,7 @@ export const user = {
 };
 
 export const initialData = {
-  stock: [
-    {
-      id: 1,
-      name: 'Paracetamol 500mg',
-      category: 'Pain Relief',
-      quantity: 45,
-      minStock: 20,
-      price: 15,
-      expiryDate: '2024-12-15',
-      prescriptionRequired: false,
-      supplier: 'MedPlus Suppliers',
-      batchNo: 'BATCH-001'
-    },
-    {
-      id: 2,
-      name: 'Amoxicillin 250mg',
-      category: 'Antibiotic',
-      quantity: 12,
-      minStock: 15,
-      price: 85,
-      expiryDate: '2024-08-20',
-      prescriptionRequired: true,
-      supplier: 'PharmaCorp',
-      batchNo: 'BATCH-002'
-    },
-    {
-      id: 3,
-      name: 'Vitamin C 1000mg',
-      category: 'Supplements',
-      quantity: 78,
-      minStock: 25,
-      price: 120,
-      expiryDate: '2025-03-10',
-      prescriptionRequired: false,
-      supplier: 'HealthPlus',
-      batchNo: 'BATCH-003'
-    },
-    {
-      id: 4,
-      name: 'Insulin Syringes',
-      category: 'Diabetes Care',
-      quantity: 8,
-      minStock: 10,
-      price: 45,
-      expiryDate: '2025-01-30',
-      prescriptionRequired: true,
-      supplier: 'Diabetic Care Ltd',
-      batchNo: 'BATCH-004'
-    },
-    {
-      id: 5,
-      name: 'Aspirin 75mg',
-      category: 'Cardiac',
-      quantity: 32,
-      minStock: 20,
-      price: 25,
-      expiryDate: '2024-11-15',
-      prescriptionRequired: false,
-      supplier: 'Cardio Pharma',
-      batchNo: 'BATCH-005'
-    }
-  ],
+  stock: [], // Stock data will be fetched from backend API
   orders: {
     pending: [
       {

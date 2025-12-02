@@ -50,14 +50,111 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// Helper function to get user-specific localStorage key (defined outside component for reuse)
+const getUserAppointmentsKey = () => {
+  try {
+    const currentUser = localStorage.getItem('currentUser');
+    if (currentUser) {
+      const user = JSON.parse(currentUser);
+      // Use email as unique identifier (or id if email not available)
+      const userIdentifier = user.email || user.id || user.user_id || 'anonymous';
+      return `userAppointments_${userIdentifier}`;
+    }
+  } catch (e) {
+    console.error('Error getting user identifier:', e);
+  }
+  return 'userAppointments_anonymous';
+};
+
 // Main Appointment Component
 const MainAppointmentComponent = ({ profile, addNotification }) => {
   const [appointments, setAppointments] = useState([]);
   const [appointmentFilter, setAppointmentFilter] = useState('all');
 
+  // Load appointments from localStorage and backend on mount
+  useEffect(() => {
+    const loadAppointments = async () => {
+      try {
+        const userAppointmentsKey = getUserAppointmentsKey();
+        
+        // First, try to load from localStorage (for quick display)
+        const savedAppointments = localStorage.getItem(userAppointmentsKey);
+        if (savedAppointments) {
+          try {
+            const parsed = JSON.parse(savedAppointments);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setAppointments(parsed);
+            }
+          } catch (e) {
+            console.error('Error parsing saved appointments:', e);
+          }
+        }
+
+        // Then, try to fetch from backend API
+        const token = localStorage.getItem('token') || localStorage.getItem('access');
+        if (token) {
+          try {
+            const cleanedToken = token.replace(/^"|"$/g, '').trim();
+            // Use the correct endpoint: /user/userdashboard/appointments/
+            const response = await fetch('http://127.0.0.1:8000/user/userdashboard/appointments/', {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${cleanedToken}`,
+                'Content-Type': 'application/json'
+              }
+            });
+
+            if (response.ok) {
+              const backendAppointments = await response.json();
+              if (Array.isArray(backendAppointments) && backendAppointments.length > 0) {
+                // Transform backend format to frontend format
+                const transformed = backendAppointments.map(apt => ({
+                  id: apt.id?.toString() || `APT-${Date.now()}-${Math.random()}`,
+                  doctorName: apt.doctor_name || apt.doctorName || 'Unknown Doctor',
+                  specialty: apt.specialty || 'General',
+                  date: apt.date || '',
+                  time: apt.time || '',
+                  status: apt.status || 'scheduled',
+                  consultationType: apt.consultationType || 'Video Consultation',
+                  doctor: apt.doctor || { id: apt.doctor_id, name: apt.doctor_name },
+                  details: apt.details || {
+                    patientName: profile?.fullName || 'User',
+                    symptoms: 'General consultation',
+                    notes: 'New appointment scheduled',
+                    prescription: 'To be provided after consultation'
+                  }
+                }));
+                setAppointments(transformed);
+                // Save to localStorage with user-specific key
+                localStorage.setItem(userAppointmentsKey, JSON.stringify(transformed));
+              } else if (Array.isArray(backendAppointments) && backendAppointments.length === 0) {
+                // If backend returns empty array, clear localStorage for this user
+                setAppointments([]);
+                localStorage.setItem(userAppointmentsKey, JSON.stringify([]));
+              }
+            }
+          } catch (error) {
+            console.error('Error fetching appointments from backend:', error);
+            // Continue with localStorage data if backend fails
+          }
+        }
+      } catch (error) {
+        console.error('Error loading appointments:', error);
+      }
+    };
+
+    loadAppointments();
+  }, [profile?.fullName]);
+
+  // Save appointments to localStorage whenever appointments change (with user-specific key)
+  useEffect(() => {
+    const userAppointmentsKey = getUserAppointmentsKey();
+    localStorage.setItem(userAppointmentsKey, JSON.stringify(appointments));
+  }, [appointments]);
+
   const [doctors] = useState([
     {
-      id: '1',
+      id: 1, // Ensure numeric ID
       name: 'Dr. Brahma Gadikoto',
       specialty: 'General Physician',
       experience: '15+ years',
@@ -66,7 +163,7 @@ const MainAppointmentComponent = ({ profile, addNotification }) => {
       availableSlots: ['09:00 AM', '10:00 AM', '11:00 AM', '02:00 PM', '03:00 PM', '04:00 PM']
     },
     {
-      id: '2',
+      id: 2, // Ensure numeric ID
       name: 'Dr. Charitha Kasturi',
       specialty: 'Pediatrician',
       experience: '12+ years',
@@ -75,7 +172,7 @@ const MainAppointmentComponent = ({ profile, addNotification }) => {
       availableSlots: ['09:30 AM', '10:30 AM', '11:30 AM', '02:30 PM', '03:30 PM', '04:30 PM']
     },
     {
-      id: '3',
+      id: 3, // Ensure numeric ID
       name: 'Dr. Rajesh Kumar',
       specialty: 'Cardiologist',
       experience: '18+ years',
@@ -121,7 +218,16 @@ const MainAppointmentComponent = ({ profile, addNotification }) => {
       }
     };
 
+    // Update state immediately for UI responsiveness
     setAppointments(prev => [newAppointment, ...prev]);
+    
+    // Save to localStorage with user-specific key
+    const userAppointmentsKey = getUserAppointmentsKey();
+    const updatedAppointments = [newAppointment, ...appointments];
+    localStorage.setItem(userAppointmentsKey, JSON.stringify(updatedAppointments));
+
+    // NOTE: Backend save is handled in ConsultationView.handleConfirmAppointment
+    // to avoid duplicate saves. This function only updates local state and localStorage.
     
     if (addNotification) {
       addNotification('Appointment Booked', `Appointment with ${doctor.name} scheduled for ${date} at ${time}`, 'appointment');

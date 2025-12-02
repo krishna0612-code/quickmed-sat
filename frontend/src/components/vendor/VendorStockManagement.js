@@ -86,7 +86,8 @@ const VendorStockManagement = ({
   setShowAddMedicineModal,
   setShowNotificationsBellModal,
   notifications,
-  setStockFilter
+  setStockFilter,
+  formatDateForDisplay
 }) => {
   const mainContentStyle = {
     padding: '24px',
@@ -504,7 +505,7 @@ const VendorStockManagement = ({
                       ...(isExpired(medicine) ? expiredStyle : {}),
                       ...(isExpiringSoon(medicine) && !isExpired(medicine) ? expiringSoonStyle : {})
                     }}>
-                      {medicine.expiryDate}
+                      {formatDateForDisplay ? formatDateForDisplay(medicine.expiryDate) : medicine.expiryDate}
                       {isExpired(medicine) && ' 🔴'}
                       {isExpiringSoon(medicine) && !isExpired(medicine) && ' 🟡'}
                     </span>

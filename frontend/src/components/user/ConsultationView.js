@@ -2376,7 +2376,29 @@ const ConsultationView = ({
   const token = localStorage.getItem("access");
 
   // If backend doctors available use them, else fallback to props
-  const displayedDoctors = doctors.length > 0 ? doctors : filteredDoctors;
+  // Ensure all doctors have valid IDs
+  const ensureDoctorIds = (doctorList) => {
+    return doctorList.map((doc, index) => {
+      if (!doc.id && !doc.doctor_id) {
+        // If no ID, create one based on index or name
+        const fallbackId = 2000 + index; // Use different range for fallback
+        console.warn('Doctor missing ID, using fallback:', doc, 'Fallback ID:', fallbackId);
+        return { ...doc, id: fallbackId };
+      }
+      // Ensure ID is a number
+      if (typeof doc.id !== 'number') {
+        const numericId = parseInt(doc.id);
+        if (!isNaN(numericId)) {
+          return { ...doc, id: numericId };
+        }
+      }
+      return doc;
+    });
+  };
+
+  const displayedDoctors = doctors.length > 0 
+    ? ensureDoctorIds(doctors) 
+    : ensureDoctorIds(filteredDoctors || []);
 
   const [showFilters, setShowFilters] = useState(false);
   const [showTimeSlotsModal, setShowTimeSlotsModal] = useState(false);
@@ -2401,6 +2423,7 @@ const ConsultationView = ({
   const [doctorForVideoConsult, setDoctorForVideoConsult] = useState(null);
   const [bookedAppointments, setBookedAppointments] = useState([]);
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
+  const [isSavingAppointment, setIsSavingAppointment] = useState(false); // Prevent duplicate saves
 
   // Refs - Fixed the empty const declaration
   const streamRef = useRef(null);
@@ -2428,17 +2451,43 @@ const ConsultationView = ({
         // Format doctor data
         //
         // Format doctor data correctly as per backend response
-        const formatted = data.map((doc) => ({
-          id: doc.id,
-          name: doc.fullName, // Changed
-          // specialty: doc.specialty || "General Physician", // Changed
-          specialty: doc.specialization,
-          experience: doc.experience || "Not updated", // Changed
-          languages: doc.languages || "English", // Optional field
-          consultationFee: doc.consultation_fee || doc.consultationFee || "500",
-          availableSlots: ["10:00 AM", "12:00 PM", "3:00 PM"], // Static until backend sends real slots
-          rating: doc.rating || 4.8,
-        }));
+        const formatted = data.map((doc, index) => {
+          // Ensure ID is a valid number - try multiple fields and use index as fallback
+          let doctorId = doc.id || doc.doctor_id || doc.user_id || doc.pk || null;
+          
+          // Try to parse as integer
+          let numericId = null;
+          if (doctorId !== null && doctorId !== undefined) {
+            numericId = parseInt(doctorId);
+            if (isNaN(numericId)) {
+              // Try extracting number from string
+              const extracted = parseInt(String(doctorId).replace(/\D/g, ''));
+              if (!isNaN(extracted) && extracted > 0) {
+                numericId = extracted;
+              }
+            }
+          }
+          
+          // If still no valid ID, use index + 1000 as fallback (to avoid conflicts with real IDs)
+          if (!numericId || isNaN(numericId) || numericId <= 0) {
+            console.warn('Doctor with invalid ID, using fallback:', doc, 'Index:', index);
+            numericId = 1000 + index; // Fallback ID
+          }
+          
+          return {
+            id: numericId, // Always ensure we have a valid numeric ID
+            name: doc.fullName || doc.name || 'Unknown Doctor',
+            fullName: doc.fullName || doc.name || 'Unknown Doctor', // Keep both for compatibility
+            specialty: doc.specialization || doc.specialty || "General Physician",
+            experience: doc.experience || "Not updated",
+            languages: doc.languages || "English",
+            consultationFee: doc.consultation_fee || doc.consultationFee || "500",
+            availableSlots: ["10:00 AM", "12:00 PM", "3:00 PM"], // Static until backend sends real slots
+            rating: doc.rating || 4.8,
+            // Keep original backend data for reference
+            originalId: doc.id || doc.doctor_id || doc.user_id,
+          };
+        });
 
         setDoctors(formatted);
       } catch (err) {
@@ -2461,11 +2510,92 @@ const ConsultationView = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Initialize with existing appointments
-  useEffect(() => {
-    if (userAppointments) {
-      setBookedAppointments(userAppointments);
+  // Helper function to get user-specific localStorage key
+  const getUserAppointmentsKey = () => {
+    try {
+      const currentUser = localStorage.getItem('currentUser');
+      if (currentUser) {
+        const user = JSON.parse(currentUser);
+        // Use email as unique identifier (or id if email not available)
+        const userIdentifier = user.email || user.id || user.user_id || 'anonymous';
+        return `bookedAppointments_${userIdentifier}`;
+      }
+    } catch (e) {
+      console.error('Error getting user identifier:', e);
     }
+    return 'bookedAppointments_anonymous';
+  };
+
+  // Initialize with existing appointments from props, localStorage, and backend
+  useEffect(() => {
+    const loadAppointments = async () => {
+      try {
+        const userAppointmentsKey = getUserAppointmentsKey();
+        
+        // First, try to load from localStorage
+        const savedAppointments = localStorage.getItem(userAppointmentsKey);
+        if (savedAppointments) {
+          try {
+            const parsed = JSON.parse(savedAppointments);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setBookedAppointments(parsed);
+            }
+          } catch (e) {
+            console.error('Error parsing saved appointments:', e);
+          }
+        }
+
+        // Also load from userAppointments prop if available
+        if (userAppointments && Array.isArray(userAppointments) && userAppointments.length > 0) {
+          setBookedAppointments(userAppointments);
+        }
+
+        // Try to fetch from backend API
+        const token = localStorage.getItem('token') || localStorage.getItem('access');
+        if (token) {
+          try {
+            const cleanedToken = token.replace(/^"|"$/g, '').trim();
+            // Use the correct endpoint: /user/userdashboard/appointments/
+            const response = await fetch('http://127.0.0.1:8000/user/userdashboard/appointments/', {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${cleanedToken}`,
+                'Content-Type': 'application/json'
+              }
+            });
+
+            if (response.ok) {
+              const backendAppointments = await response.json();
+              if (Array.isArray(backendAppointments) && backendAppointments.length > 0) {
+                // Transform backend format to frontend format
+                const transformed = backendAppointments.map(apt => ({
+                  doctorId: apt.doctor_id || apt.doctorId,
+                  doctorName: apt.doctor_name || apt.doctorName || 'Unknown Doctor',
+                  date: apt.date || '',
+                  time: apt.time || '',
+                  status: apt.status || 'scheduled',
+                  id: apt.id?.toString() || `APT-${Date.now()}-${Math.random()}`
+                }));
+                setBookedAppointments(transformed);
+                // Save to localStorage with user-specific key
+                localStorage.setItem(userAppointmentsKey, JSON.stringify(transformed));
+              } else if (Array.isArray(backendAppointments) && backendAppointments.length === 0) {
+                // If backend returns empty array, clear localStorage for this user
+                setBookedAppointments([]);
+                localStorage.setItem(userAppointmentsKey, JSON.stringify([]));
+              }
+            }
+          } catch (error) {
+            console.error('Error fetching appointments from backend:', error);
+            // Continue with localStorage/prop data if backend fails
+          }
+        }
+      } catch (error) {
+        console.error('Error loading appointments:', error);
+      }
+    };
+
+    loadAppointments();
   }, [userAppointments]);
 
   // Scroll to top when component mounts
@@ -2561,6 +2691,23 @@ const ConsultationView = ({
 
   // Handle Book Appointment Click
   const handleBookAppointmentClick = (doctor) => {
+    // Ensure doctor has a valid ID before setting
+    if (!doctor) {
+      console.error('No doctor provided to handleBookAppointmentClick');
+      return;
+    }
+    
+    // Validate and ensure ID exists
+    if (!doctor.id && !doctor.doctor_id && !doctor.user_id) {
+      console.warn('Doctor missing ID, attempting to fix:', doctor);
+      // Try to extract ID from any available field
+      const possibleId = doctor.originalId || doctor.id || doctor.doctor_id || doctor.user_id;
+      if (possibleId) {
+        doctor.id = parseInt(possibleId) || parseInt(String(possibleId).replace(/\D/g, ''));
+      }
+    }
+    
+    console.log('Setting selected doctor:', doctor);
     setSelectedDoctor(doctor);
     setSelectedAppointmentDate("");
     setSelectedAppointmentTime("");
@@ -2814,17 +2961,34 @@ const ConsultationView = ({
     return dates;
   };
 
-  // Confirm Appointment Booking - UPDATED to enable video consult
-  const handleConfirmAppointment = () => {
+  // Confirm Appointment Booking - UPDATED to enable video consult and persist to localStorage/backend
+  const handleConfirmAppointment = async () => {
+    // Prevent duplicate saves
+    if (isSavingAppointment) {
+      console.log('⏳ Appointment save already in progress, ignoring duplicate call');
+      return;
+    }
+
     if (
       !selectedDoctor ||
       !selectedAppointmentDate ||
       !selectedAppointmentTime
     ) {
+      console.error('Missing required fields:', {
+        selectedDoctor: !!selectedDoctor,
+        selectedAppointmentDate,
+        selectedAppointmentTime
+      });
       return;
     }
 
-    // Book the appointment
+    // Set saving flag to prevent duplicates
+    setIsSavingAppointment(true);
+
+    // Log doctor object for debugging
+    console.log('Selected doctor object:', selectedDoctor);
+
+    // Book the appointment (this will update parent state and localStorage only)
     handleBookAppointment(
       selectedDoctor,
       selectedAppointmentDate,
@@ -2833,43 +2997,240 @@ const ConsultationView = ({
 
     // Add to local booked appointments
     const newAppointment = {
-      doctorId: selectedDoctor.id,
-      doctorName: selectedDoctor.name,
+      doctorId: selectedDoctor.id || selectedDoctor.doctor_id,
+      doctorName: selectedDoctor.name || selectedDoctor.fullName,
       date: selectedAppointmentDate,
       time: selectedAppointmentTime,
-      status: "confirmed",
-      id: Date.now().toString(),
+      status: "scheduled",
+      id: `APT-${Date.now()}`,
     };
 
-    setBookedAppointments((prev) => [...prev, newAppointment]);
+    setBookedAppointments((prev) => {
+      const updated = [...prev, newAppointment];
+      // Save to localStorage with user-specific key
+      const userAppointmentsKey = getUserAppointmentsKey();
+      localStorage.setItem(userAppointmentsKey, JSON.stringify(updated));
+      return updated;
+    });
 
-    // Close modal and reset states
-    setShowTimeSlotsModal(false);
-    setSelectedDoctor(null);
-    setSelectedAppointmentDate("");
-    setSelectedAppointmentTime("");
+    // Save to backend API - Save to database
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('access');
+      if (!token) {
+        console.error('No authentication token found');
+        alert('Please login to save appointments to the database.');
+        return;
+      }
 
-    // Show success message with video consult details
-    const appointmentDate = new Date(newAppointment.date);
-    const isToday =
-      appointmentDate.toDateString() === new Date().toDateString();
+      const cleanedToken = token.replace(/^"|"$/g, '').trim();
+      
+      // Log doctor object for debugging
+      console.log('🔍 Selected doctor object:', selectedDoctor);
+      console.log('🔍 Doctor ID type and value:', typeof selectedDoctor?.id, selectedDoctor?.id);
+      
+      // Prepare request data - handle different doctor object structures
+      let doctorId = null;
+      if (selectedDoctor) {
+        // Try different possible ID fields
+        if (selectedDoctor.id !== undefined && selectedDoctor.id !== null && selectedDoctor.id !== '') {
+          doctorId = parseInt(selectedDoctor.id);
+          if (isNaN(doctorId)) {
+            // Try as string extraction
+            const extracted = parseInt(String(selectedDoctor.id).replace(/\D/g, ''));
+            if (!isNaN(extracted) && extracted > 0) {
+              doctorId = extracted;
+            }
+          }
+        } else if (selectedDoctor.doctor_id !== undefined && selectedDoctor.doctor_id !== null && selectedDoctor.doctor_id !== '') {
+          doctorId = parseInt(selectedDoctor.doctor_id);
+          if (isNaN(doctorId)) {
+            const extracted = parseInt(String(selectedDoctor.doctor_id).replace(/\D/g, ''));
+            if (!isNaN(extracted) && extracted > 0) {
+              doctorId = extracted;
+            }
+          }
+        }
+      }
 
-    if (isToday) {
-      setTimeout(() => {
-        alert(
-          `Appointment booked successfully with Dr. ${newAppointment.doctorName}!\n\nDate: ${newAppointment.date}\nTime: ${newAppointment.time}\n\nVideo consultation will be available 15 minutes before your scheduled time until 15 minutes after.`
-        );
-      }, 100);
-    } else {
-      setTimeout(() => {
-        alert(
-          `Appointment booked successfully with Dr. ${
-            newAppointment.doctorName
-          }!\n\nDate: ${newAppointment.date}\nTime: ${
-            newAppointment.time
-          }\n\nVideo consultation will be available on ${appointmentDate.toLocaleDateString()} from 15 minutes before your scheduled time until 15 minutes after.`
-        );
-      }, 100);
+      const doctorName = selectedDoctor?.name || selectedDoctor?.fullName || selectedDoctor?.doctor_name || 'Unknown Doctor';
+
+      // Validate data before sending
+      if (!doctorId || isNaN(doctorId) || doctorId <= 0) {
+        console.error('❌ Invalid doctor ID validation failed:', {
+          selectedDoctor,
+          extractedId: doctorId,
+          originalId: selectedDoctor?.id,
+          doctorIdField: selectedDoctor?.doctor_id,
+          idType: typeof selectedDoctor?.id,
+          allDoctorKeys: selectedDoctor ? Object.keys(selectedDoctor) : 'No doctor object'
+        });
+        alert(`Invalid doctor information. Doctor ID is missing or invalid.\n\nPlease try selecting the doctor again.\n\nDebug info: ID=${selectedDoctor?.id}, Type=${typeof selectedDoctor?.id}`);
+        return;
+      }
+
+      if (!selectedAppointmentDate || !selectedAppointmentTime) {
+        console.error('Missing date or time:', { date: selectedAppointmentDate, time: selectedAppointmentTime });
+        alert('Please select both date and time for the appointment.');
+        return;
+      }
+
+      const requestData = {
+        doctor_id: doctorId,
+        doctor_name: doctorName,
+        date: selectedAppointmentDate, // Format: YYYY-MM-DD
+        time: selectedAppointmentTime, // Format: HH:MM AM/PM
+        status: 'scheduled' // Backend will use default 'confirmed' if not provided
+      };
+
+      if (!requestData.date || !requestData.time) {
+        console.error('Missing date or time:', { date: requestData.date, time: requestData.time });
+        alert('Please select both date and time for the appointment.');
+        return;
+      }
+
+      console.log('📤 Sending appointment data to backend:', requestData);
+      console.log('🔑 Token (first 20 chars):', cleanedToken.substring(0, 20) + '...');
+      
+      // Use the correct endpoint: /user/userdashboard/appointments/book/
+      const response = await fetch('http://127.0.0.1:8000/user/userdashboard/appointments/book/', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${cleanedToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestData)
+      });
+
+      console.log('📥 Backend response status:', response.status, response.statusText);
+
+      if (response.ok) {
+        const savedAppointment = await response.json();
+        console.log('✅ Appointment saved to database successfully:', savedAppointment);
+        
+        // Update appointment with backend ID if provided
+        if (savedAppointment.id) {
+          setBookedAppointments(prev => prev.map(apt => 
+            apt.id === newAppointment.id 
+              ? { ...apt, id: savedAppointment.id.toString(), backendId: savedAppointment.id }
+              : apt
+          ));
+          
+          // Also update localStorage with the backend ID
+          const userAppointmentsKey = getUserAppointmentsKey();
+          const updatedAppointments = JSON.parse(localStorage.getItem(userAppointmentsKey) || '[]');
+          const updated = updatedAppointments.map(apt => 
+            apt.id === newAppointment.id 
+              ? { ...apt, id: savedAppointment.id.toString(), backendId: savedAppointment.id }
+              : apt
+          );
+          localStorage.setItem(userAppointmentsKey, JSON.stringify(updated));
+        }
+
+        // Close modal and reset states
+        setShowTimeSlotsModal(false);
+        setSelectedDoctor(null);
+        setSelectedAppointmentDate("");
+        setSelectedAppointmentTime("");
+
+        // Show success message with video consult details
+        const appointmentDate = new Date(newAppointment.date);
+        const isToday =
+          appointmentDate.toDateString() === new Date().toDateString();
+
+        if (isToday) {
+          setTimeout(() => {
+            alert(
+              `Appointment booked successfully with Dr. ${newAppointment.doctorName}!\n\nDate: ${newAppointment.date}\nTime: ${newAppointment.time}\n\nVideo consultation will be available 15 minutes before your scheduled time until 15 minutes after.`
+            );
+          }, 100);
+        } else {
+          setTimeout(() => {
+            alert(
+              `Appointment booked successfully with Dr. ${
+                newAppointment.doctorName
+              }!\n\nDate: ${newAppointment.date}\nTime: ${
+                newAppointment.time
+              }\n\nVideo consultation will be available on ${appointmentDate.toLocaleDateString()} from 15 minutes before your scheduled time until 15 minutes after.`
+            );
+          }, 100);
+        }
+        
+        // Reset saving flag on success
+        setIsSavingAppointment(false);
+        return; // Exit early on success
+      } else {
+        // Get detailed error message from backend
+        let errorMessage = 'Please try again';
+        try {
+          const errorData = await response.json();
+          console.error('Backend error response:', errorData);
+          console.error('Response status:', response.status);
+          
+          // Handle different error formats
+          if (errorData.detail) {
+            errorMessage = errorData.detail;
+          } else if (errorData.error) {
+            if (typeof errorData.error === 'string') {
+              errorMessage = errorData.error;
+            } else {
+              errorMessage = JSON.stringify(errorData.error);
+            }
+          } else if (errorData.errors) {
+            // Handle validation errors
+            const errorFields = Object.keys(errorData.errors);
+            if (errorFields.length > 0) {
+              const firstError = errorData.errors[errorFields[0]];
+              errorMessage = Array.isArray(firstError) ? firstError[0] : String(firstError);
+            }
+          } else if (typeof errorData === 'object') {
+            // Try to extract any error message
+            const errorKeys = Object.keys(errorData);
+            if (errorKeys.length > 0) {
+              const firstKey = errorKeys[0];
+              const firstValue = errorData[firstKey];
+              if (Array.isArray(firstValue)) {
+                errorMessage = firstValue[0];
+              } else {
+                errorMessage = String(firstValue);
+              }
+            }
+          }
+        } catch (parseError) {
+          errorMessage = response.statusText || `HTTP ${response.status}`;
+          console.error('Failed to parse error response:', parseError);
+        }
+        
+        console.error('Failed to save appointment. Full error:', errorMessage);
+        alert(`Failed to save appointment to database: ${errorMessage}\n\nThe appointment has been saved locally and will be synced when the connection is restored.`);
+        
+        // Reset saving flag on error
+        setIsSavingAppointment(false);
+        
+        // Still close modal even on error since it's saved locally
+        setShowTimeSlotsModal(false);
+        setSelectedDoctor(null);
+        setSelectedAppointmentDate("");
+        setSelectedAppointmentTime("");
+      }
+    } catch (error) {
+      console.error('Network error saving appointment to backend:', error);
+      
+      // Reset saving flag on error
+      setIsSavingAppointment(false);
+      
+      // Check if it's a network error or CORS error
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        alert('Network error: Unable to connect to server. Please check if the backend server is running.\n\nThe appointment has been saved locally and will be synced when the connection is restored.');
+      } else {
+        alert(`Error: ${error.message || 'Unknown error occurred'}.\n\nThe appointment has been saved locally and will be synced when the connection is restored.`);
+      }
+      // Appointment is still saved in localStorage, so it will persist
+      
+      // Still close modal even on error since it's saved locally
+      setShowTimeSlotsModal(false);
+      setSelectedDoctor(null);
+      setSelectedAppointmentDate("");
+      setSelectedAppointmentTime("");
     }
   };
 
@@ -3993,25 +4354,26 @@ const ConsultationView = ({
 
             <button
               onClick={handleConfirmAppointment}
-              disabled={!selectedAppointmentDate || !selectedAppointmentTime}
+              disabled={!selectedAppointmentDate || !selectedAppointmentTime || isSavingAppointment}
               style={{
                 padding: "0.75rem 1.5rem",
                 backgroundColor:
-                  selectedAppointmentDate && selectedAppointmentTime
+                  (selectedAppointmentDate && selectedAppointmentTime && !isSavingAppointment)
                     ? "#7C2A62"
                     : "#ccc",
                 color: "white",
                 border: "none",
                 borderRadius: "8px",
                 cursor:
-                  selectedAppointmentDate && selectedAppointmentTime
+                  (selectedAppointmentDate && selectedAppointmentTime && !isSavingAppointment)
                     ? "pointer"
                     : "not-allowed",
                 fontWeight: "600",
+                opacity: isSavingAppointment ? 0.7 : 1,
               }}
               type="button"
             >
-              Confirm Appointment
+              {isSavingAppointment ? "Saving..." : "Confirm Appointment"}
             </button>
           </div>
         </div>

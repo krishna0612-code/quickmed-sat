@@ -3,6 +3,7 @@ import React, { useState, useCallback } from 'react';
 // Separate Modal Components to prevent re-renders
 const AddMedicineModal = ({ show, onClose, onAdd, newMedicine, setNewMedicine }) => {
   const [formErrors, setFormErrors] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
 
   const validateField = (fieldName, value) => {
     let error = '';
@@ -37,9 +38,25 @@ const AddMedicineModal = ({ show, onClose, onAdd, newMedicine, setNewMedicine })
         if (!value) {
           error = 'Expiry date is required';
         } else {
-          const expiryDate = new Date(value);
+          // Handle both yyyy-mm-dd (HTML input) and dd-mm-yyyy formats
+          let expiryDate;
+          if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            // yyyy-mm-dd format from HTML date input
+            expiryDate = new Date(value + 'T00:00:00');
+          } else if (/^\d{2}-\d{2}-\d{4}$/.test(value)) {
+            // dd-mm-yyyy format
+            const [day, month, year] = value.split('-');
+            expiryDate = new Date(`${year}-${month}-${day}T00:00:00`);
+          } else {
+            expiryDate = new Date(value);
+          }
+          
           const today = new Date();
-          if (expiryDate <= today) {
+          today.setHours(0, 0, 0, 0); // Reset time to compare dates only
+          
+          if (isNaN(expiryDate.getTime())) {
+            error = 'Invalid date format';
+          } else if (expiryDate <= today) {
             error = 'Expiry date must be in the future';
           }
         }
@@ -94,9 +111,34 @@ const AddMedicineModal = ({ show, onClose, onAdd, newMedicine, setNewMedicine })
     }
   }, [setNewMedicine, formErrors]);
 
-  const handleAddClick = () => {
-    if (validateForm()) {
-      onAdd();
+  const handleAddClick = async () => {
+    if (isSaving) {
+      console.log('Already saving, please wait...');
+      return; // Prevent double-clicks
+    }
+    
+    console.log('Validating form...', newMedicine);
+    const isValid = validateForm();
+    if (!isValid) {
+      console.log('Form validation failed. Errors:', formErrors);
+      // Show first error to user
+      const firstError = Object.values(formErrors).find(err => err);
+      if (firstError) {
+        alert(`Validation Error: ${firstError}`);
+      }
+      return;
+    }
+    
+    console.log('Form is valid, calling onAdd...');
+    setIsSaving(true);
+    try {
+      await onAdd();
+      console.log('onAdd completed successfully');
+    } catch (error) {
+      console.error('Error in handleAddClick:', error);
+      alert(`Error adding medicine: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -410,10 +452,14 @@ const AddMedicineModal = ({ show, onClose, onAdd, newMedicine, setNewMedicine })
             Cancel
           </button>
           <button 
-            style={primaryButtonStyle}
+            style={{
+              ...primaryButtonStyle,
+              ...(isSaving && { opacity: 0.6, cursor: 'not-allowed' })
+            }}
             onClick={handleAddClick}
+            disabled={isSaving}
           >
-            Add Medicine
+            {isSaving ? 'Adding...' : 'Add Medicine'}
           </button>
         </div>
       </div>
