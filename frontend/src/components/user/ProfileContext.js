@@ -58,6 +58,80 @@ export const ProfileProvider = ({ children, user }) => {
     }
   });
 
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+
+  // Fetch profile from backend on mount and when user changes
+  useEffect(() => {
+    const fetchProfileFromBackend = async () => {
+      const token = localStorage.getItem('token');
+      if (!token || !user || !user.email || user.userType !== 'user') {
+        console.log('Skipping backend fetch: no token or not a user');
+        return;
+      }
+
+      setIsLoadingProfile(true);
+      try {
+        const cleanedToken = token.replace(/^"|"$/g, '').trim();
+        const response = await fetch('http://127.0.0.1:8000/user/userdashboard/profile/', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${cleanedToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        // Check if response is JSON before parsing
+        const contentType = response.headers.get('content-type');
+        let profileData;
+        
+        if (contentType && contentType.includes('application/json')) {
+          try {
+            profileData = await response.json();
+          } catch (jsonError) {
+            console.error('Error parsing JSON response:', jsonError);
+            throw new Error('Invalid response format from server. Please try again.');
+          }
+        } else {
+          // If response is not JSON (e.g., HTML error page), get text
+          const text = await response.text();
+          console.error('Non-JSON response received:', text.substring(0, 200));
+          throw new Error('Server returned an invalid response. Please try again.');
+        }
+
+        if (response.ok) {
+          console.log('Profile fetched from backend:', profileData);
+          
+          // Update profile state with backend data
+          setProfile(prevProfile => ({
+            ...prevProfile,
+            fullName: profileData.fullName || prevProfile.fullName || user.fullName || '',
+            email: profileData.email || prevProfile.email || user.email || '',
+            phone: profileData.phone || prevProfile.phone || user.phone || '',
+            address: profileData.address || prevProfile.address || '',
+            city: profileData.city || prevProfile.city || '',
+            pincode: profileData.pincode || prevProfile.pincode || '',
+            dateOfBirth: profileData.dateOfBirth || prevProfile.dateOfBirth || '',
+            age: profileData.age || prevProfile.age || '',
+            gender: profileData.gender || prevProfile.gender || '',
+            profilePhoto: profileData.profilePhoto || prevProfile.profilePhoto || null,
+            lastUpdated: profileData.lastUpdated || new Date().toISOString()
+          }));
+        } else {
+          console.warn('Failed to fetch profile from backend:', response.status);
+          // Fallback to localStorage if backend fails
+        }
+      } catch (error) {
+        console.error('Error fetching profile from backend:', error);
+        // Fallback to localStorage if network error
+        // Don't show error to user, just use localStorage data
+      } finally {
+        setIsLoadingProfile(false);
+      }
+    };
+
+    fetchProfileFromBackend();
+  }, [user]);
+
   // Sync profile to localStorage whenever it changes
   useEffect(() => {
     try {
@@ -94,9 +168,11 @@ export const ProfileProvider = ({ children, user }) => {
     }
   }, [user]); // This will trigger immediately when user prop changes
 
-  // Enhanced updateProfile function
-  const updateProfile = (newProfileData) => {
+  // Enhanced updateProfile function with backend sync
+  const updateProfile = async (newProfileData) => {
     console.log('Updating profile with new data:', newProfileData);
+    
+    // Update local state first for immediate UI feedback
     setProfile(prevProfile => {
       const updatedProfile = {
         ...prevProfile,
@@ -113,6 +189,91 @@ export const ProfileProvider = ({ children, user }) => {
       console.log('Final updated profile:', updatedProfile);
       return updatedProfile;
     });
+
+    // Save to backend
+    const token = localStorage.getItem('token');
+    if (token && user && user.email && user.userType === 'user') {
+      try {
+        const cleanedToken = token.replace(/^"|"$/g, '').trim();
+        
+        // Prepare data for backend (convert camelCase to snake_case where needed)
+        const backendData = {
+          address: newProfileData.address || '',
+          city: newProfileData.city || '',
+          pincode: newProfileData.pincode || '',
+          dateOfBirth: newProfileData.dateOfBirth || '',
+          age: newProfileData.age ? parseInt(newProfileData.age) : null,
+          gender: newProfileData.gender || ''
+        };
+
+        const response = await fetch('http://127.0.0.1:8000/user/userdashboard/profile/', {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${cleanedToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(backendData)
+        });
+
+        // Check if response is JSON before parsing
+        const contentType = response.headers.get('content-type');
+        let savedProfile;
+        
+        if (contentType && contentType.includes('application/json')) {
+          try {
+            savedProfile = await response.json();
+          } catch (jsonError) {
+            console.error('Error parsing JSON response:', jsonError);
+            throw new Error('Invalid response format from server. Please try again.');
+          }
+        } else {
+          // If response is not JSON (e.g., HTML error page), get text
+          const text = await response.text();
+          console.error('Non-JSON response received:', text.substring(0, 200));
+          throw new Error('Server returned an invalid response. Please try again.');
+        }
+
+        if (response.ok) {
+          console.log('Profile saved to backend:', savedProfile);
+          
+          // Update state with backend response to ensure consistency
+          setProfile(prevProfile => ({
+            ...prevProfile,
+            ...savedProfile,
+            lastUpdated: savedProfile.lastUpdated || new Date().toISOString()
+          }));
+        } else {
+          // Error response - already parsed as JSON above
+          console.error('Failed to save profile to backend:', savedProfile);
+          
+          // Build detailed error message
+          let errorMessage = 'Failed to save profile';
+          if (savedProfile.error) {
+            errorMessage = savedProfile.error;
+          } else if (savedProfile.detail) {
+            errorMessage = savedProfile.detail;
+          } else if (savedProfile.message) {
+            errorMessage = savedProfile.message;
+          } else if (savedProfile.errors) {
+            // Handle validation errors
+            const errorList = Object.entries(savedProfile.errors)
+              .map(([field, errors]) => `${field}: ${Array.isArray(errors) ? errors.join(', ') : errors}`)
+              .join('; ');
+            errorMessage = `Validation errors: ${errorList}`;
+          }
+          
+          throw new Error(errorMessage);
+        }
+      } catch (error) {
+        console.error('Error saving profile to backend:', error);
+        // If it's already an Error object, re-throw it; otherwise create a new one
+        if (error instanceof Error) {
+          throw error;
+        } else {
+          throw new Error(error.message || 'An unexpected error occurred while saving profile');
+        }
+      }
+    }
   };
 
   const updateProfilePhoto = (photoUrl) => {
@@ -186,7 +347,8 @@ export const ProfileProvider = ({ children, user }) => {
       removeProfilePhoto,
       clearProfile,
       isProfileComplete,
-      forceProfileUpdate // Add this new function
+      forceProfileUpdate,
+      isLoadingProfile
     }}>
       {children}
     </ProfileContext.Provider>

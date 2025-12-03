@@ -759,71 +759,82 @@ const Dashboard = ({
     }
   }, [completedOrders.length, incentives.dailyTargetAchieved]);
 
-  // Initialize available orders with pharmacy details
-  useEffect(() => {
-    const initialOrders = [
-      {
-        id: 'ORD001',
-        orderId: 'MED001',
-        customerName: 'Rajesh Kumar',
-        customerPhone: '+91 98765 43210',
-        pharmacyName: 'Apollo Pharmacy',
-        pharmacyPhone: '+91 98765 43211',
-        pharmacyLocation: 'Apollo Pharmacy, Sector 18, Noida',
-        deliveryLocation: 'H-Block, Sector 62, Noida',
-        estimatedTime: '25 mins',
-        distance: '3.2 km',
-        amount: 45,
-        tip: 10,
-        status: 'pending',
-        priority: 'High',
-        instructions: 'Handle with care. Keep medicines in original packaging.'
-      }
-    ];
-    setAvailableOrders(initialOrders);
-  }, []);
+  // Use ref to track accepted orders without causing re-renders
+  const acceptedOrdersRef = React.useRef(acceptedOrders);
+  React.useEffect(() => {
+    acceptedOrdersRef.current = acceptedOrders;
+  }, [acceptedOrders]);
 
-  // Simulate new pharmacy orders coming in real-time ONLY when no active orders AND no available orders
-  useEffect(() => {
-    if (!isOnline || acceptedOrders.length > 0 || availableOrders.length > 0 || incentives.dailyTargetAchieved) return;
+  // Fetch available orders from backend API
+  const fetchAvailableOrders = React.useCallback(async () => {
+    if (!isOnline) return;
+    
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.log('No token found, cannot fetch available orders');
+      return;
+    }
 
-    const orderInterval = setInterval(() => {
-      setAvailableOrders(prev => {
-        if (prev.length >= 1) return prev; // Only allow one order at a time
-        
-        const pharmacies = [
-          { name: 'Apollo Pharmacy', phone: '+91 98765 43211' },
-          { name: 'MedPlus Pharmacy', phone: '+91 98765 43213' },
-          { name: 'Fortis Pharmacy', phone: '+91 98765 43215' },
-          { name: 'Max Healthcare Pharmacy', phone: '+91 98765 43217' }
-        ];
-        
-        const pharmacy = pharmacies[Math.floor(Math.random() * pharmacies.length)];
-        const tipAmount = Math.random() > 0.3 ? Math.floor(Math.random() * 30) + 5 : 0;
-        const newOrder = {
-          id: `ORD${Date.now()}`,
-          orderId: `MED${Date.now().toString().slice(-4)}`,
-          customerName: ['Amit Sharma', 'Neha Gupta', 'Rohit Verma', 'Sneha Patel'][Math.floor(Math.random() * 4)],
-          customerPhone: `+91 9${Math.floor(10000000 + Math.random() * 90000000)}`,
-          pharmacyName: pharmacy.name,
-          pharmacyPhone: pharmacy.phone,
-          pharmacyLocation: `${pharmacy.name}, Sector ${15 + Math.floor(Math.random() * 10)}, Noida`,
-          deliveryLocation: `Sector ${30 + Math.floor(Math.random() * 50)}, Noida`,
-          estimatedTime: `${20 + Math.floor(Math.random() * 20)} mins`,
-          distance: `${(2 + Math.random() * 4).toFixed(1)} km`,
-          amount: 30 + Math.floor(Math.random() * 50),
-          tip: tipAmount,
-          status: 'pending',
-          priority: ['Low', 'Medium', 'High'][Math.floor(Math.random() * 3)],
-          instructions: 'Handle with care. Keep medicines in original packaging.'
-        };
-        
-        return [newOrder]; // Only return one order
+    try {
+      const cleanedToken = token.replace(/^"|"$/g, '').trim();
+      const response = await fetch('http://127.0.0.1:8000/users/orders/delivery/available/', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${cleanedToken}`,
+          'Content-Type': 'application/json'
+        }
       });
-    }, 30000); // Check every 30 seconds for new orders
 
-    return () => clearInterval(orderInterval);
-  }, [isOnline, acceptedOrders.length, availableOrders.length, incentives.dailyTargetAchieved]);
+      if (response.ok) {
+        const ordersData = await response.json();
+        console.log('Fetched available orders from backend:', ordersData);
+        
+        // Filter out orders that are already accepted (use ref to get current value)
+        const acceptedOrderIds = acceptedOrdersRef.current.map(o => o.orderId || o.id);
+        const newAvailableOrders = ordersData.filter(order => 
+          !acceptedOrderIds.includes(order.orderId || order.id)
+        );
+        
+        // Remove duplicates based on orderId
+        const uniqueOrders = newAvailableOrders.filter((order, index, self) =>
+          index === self.findIndex(o => (o.orderId || o.id) === (order.orderId || order.id))
+        );
+        
+        setAvailableOrders(uniqueOrders);
+        
+        // Show notification if new orders arrived and no accepted orders
+        if (uniqueOrders.length > 0 && acceptedOrdersRef.current.length === 0) {
+          // Play notification sound for new orders
+          if (audioRef.current) {
+            audioRef.current.play().catch(e => console.log('Audio play failed:', e));
+          }
+        }
+      } else {
+        console.error('Failed to fetch available orders:', response.status);
+        // Fallback to empty array if API fails
+        setAvailableOrders([]);
+      }
+    } catch (error) {
+      console.error('Error fetching available orders:', error);
+      // Fallback to empty array on error
+      setAvailableOrders([]);
+    }
+  }, [isOnline]);
+
+  // Initial fetch and polling for available orders
+  useEffect(() => {
+    // Fetch immediately on mount and when online status changes
+    fetchAvailableOrders();
+
+    // Poll every 10 seconds for new available orders (when online)
+    if (isOnline) {
+      const pollInterval = setInterval(() => {
+        fetchAvailableOrders();
+      }, 10000); // Poll every 10 seconds
+
+      return () => clearInterval(pollInterval);
+    }
+  }, [isOnline, fetchAvailableOrders]);
 
   // Notification sound system - only when online and has available orders but no active orders
   useEffect(() => {
@@ -904,7 +915,7 @@ const Dashboard = ({
     safeToggleOnlineStatus(newOnlineStatus);
   };
 
-  const handleAcceptOrder = (order) => {
+  const handleAcceptOrder = React.useCallback((order) => {
     if (notificationIntervalRef.current) {
       clearInterval(notificationIntervalRef.current);
     }
@@ -916,14 +927,21 @@ const Dashboard = ({
     };
 
     setAcceptedOrders([acceptedOrder]);
-    setAvailableOrders([]); // Clear available orders when accepting
+    // Remove the accepted order from available orders (don't clear all, just remove this one)
+    setAvailableOrders(prev => prev.filter(o => (o.orderId || o.id) !== (order.orderId || order.id)));
     setCurrentStep('accepted');
     
     setIncentives(prev => ({
       ...prev,
       today: prev.today + order.amount
     }));
-  };
+    
+    // Refresh available orders after accepting (to get any new orders)
+    // Use the fetchAvailableOrders from the outer scope
+    setTimeout(() => {
+      fetchAvailableOrders();
+    }, 1000);
+  }, [fetchAvailableOrders]);
 
   const handleReachedPharmacy = (order) => {
     setAcceptedOrders(prev => 

@@ -6,21 +6,28 @@ from .models import CustomUser
 
 @api_view(["POST"])
 def signup(request):
-    # Check if email already exists
-    if CustomUser.objects.filter(email=request.data.get("email")).exists():
-        return Response({"message": "Email already registered"}, status=400)
+    try:
+        # Check if email already exists
+        if CustomUser.objects.filter(email=request.data.get("email")).exists():
+            return Response({"message": "Email already registered"}, status=400)
 
-    # Check if phone already exists
-    if CustomUser.objects.filter(phone=request.data.get("phone")).exists():
-        return Response({"message": "Phone already registered"}, status=400)
+        # Check if phone already exists
+        if CustomUser.objects.filter(phone=request.data.get("phone")).exists():
+            return Response({"message": "Phone already registered"}, status=400)
 
-    serializer = SignupSerializer(data=request.data)
+        serializer = SignupSerializer(data=request.data)
 
-    if serializer.is_valid():
-        serializer.save()
-        return Response({"message": "Account created successfully"}, status=201)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Account created successfully"}, status=201)
 
-    return Response(serializer.errors, status=400)
+        return Response(serializer.errors, status=400)
+    except Exception as e:
+        # Log the error and return JSON response
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Signup error: {str(e)}", exc_info=True)
+        return Response({"message": f"An error occurred during signup: {str(e)}"}, status=500)
 
 
 
@@ -199,11 +206,61 @@ def cart_item_detail(request, medicine_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def create_order(request):
-    """Create a new order (for users)"""
+    """Create a new order (for users) - supports single order or multiple orders split by vendor"""
     if request.user.user_type != 'user':
         return Response({"error": "Only users can create orders"}, status=status.HTTP_403_FORBIDDEN)
     
-    # Get vendor_id from request
+    # Check if this is a bulk order creation (multiple vendors)
+    if 'orders' in request.data and isinstance(request.data['orders'], list):
+        # Multiple orders - one per vendor
+        created_orders = []
+        base_order_id = f"ORD{int(time.time() * 1000)}"
+        
+        for idx, vendor_order_data in enumerate(request.data['orders']):
+            vendor_id = vendor_order_data.get('vendor_id')
+            if not vendor_id:
+                continue
+            
+            try:
+                vendor = CustomUser.objects.get(id=vendor_id, user_type='vendor')
+            except CustomUser.DoesNotExist:
+                print(f"Vendor {vendor_id} not found, skipping order")
+                continue
+            
+            # Generate unique order_id for each vendor order
+            order_id = f"{base_order_id}-V{idx + 1}"
+            
+            # Calculate total for this vendor's items
+            vendor_items = vendor_order_data.get('items', [])
+            vendor_total = sum(item.get('price', 0) * item.get('quantity', 1) for item in vendor_items)
+            
+            # Check if prescription required for this vendor's items
+            vendor_prescription_required = any(item.get('prescriptionRequired', False) for item in vendor_items)
+            
+            # Create order for this vendor
+            order_data = {
+                'user': request.user,
+                'vendor': vendor,
+                'order_id': order_id,
+                'status': 'pending',
+                'delivery_type': vendor_order_data.get('delivery_type', request.data.get('delivery_type', 'home')),
+                'customer_name': vendor_order_data.get('customer_name') or request.data.get('customer_name') or request.user.full_name,
+                'customer_phone': vendor_order_data.get('customer_phone') or request.data.get('customer_phone') or request.user.phone,
+                'delivery_address': vendor_order_data.get('delivery_address') or request.data.get('delivery_address', ''),
+                'items': vendor_items,
+                'total_amount': vendor_total,
+                'payment_id': request.data.get('payment_id', ''),
+                'prescription_required': vendor_prescription_required
+            }
+            
+            order = Order.objects.create(**order_data)
+            print(f"Order created: {order.order_id} for vendor {vendor.email} (ID: {vendor.id}) with {len(vendor_items)} items")
+            serializer = OrderSerializer(order)
+            created_orders.append(serializer.data)
+        
+        return Response(created_orders, status=status.HTTP_201_CREATED)
+    
+    # Single order creation (backward compatibility)
     vendor_id = request.data.get('vendor_id')
     if not vendor_id:
         return Response({"error": "vendor_id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -304,6 +361,97 @@ def update_order_status(request, order_id):
     
     serializer = OrderSerializer(order)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def delivery_available_orders(request):
+    """Get all ready orders available for delivery agents (status='ready' and delivery_type='home')"""
+    if request.user.user_type != 'delivery':
+        return Response({"error": "Only delivery agents can view available orders"}, status=status.HTTP_403_FORBIDDEN)
+    
+    # Get all orders with status='ready' and delivery_type='home'
+    # These are orders that vendors have marked as ready and are waiting for delivery
+    orders = Order.objects.filter(
+        status='ready',
+        delivery_type='home'
+    ).order_by('-created_at')
+    
+    serializer = OrderSerializer(orders, many=True)
+    
+    # Transform to delivery dashboard format
+    from django.utils import timezone
+    from datetime import datetime
+    
+    available_orders = []
+    for order_obj, order_data in zip(orders, serializer.data):
+        # Get vendor pharmacy name and location from VendorProfile if available
+        try:
+            vendor = CustomUser.objects.get(id=order_data.get('vendorId'))
+            pharmacy_name = vendor.full_name  # Default to vendor name
+            pharmacy_location = f"{vendor.full_name}, Location"  # Default location
+            pharmacy_phone = vendor.phone or ''  # Default phone
+            
+            try:
+                vendor_profile = vendor.vendorprofile
+                pharmacy_name = vendor_profile.pharmacy_name or vendor.full_name
+                # Build pharmacy location from vendor profile
+                location_parts = []
+                if vendor_profile.address:
+                    location_parts.append(vendor_profile.address)
+                if vendor_profile.city:
+                    location_parts.append(vendor_profile.city)
+                if location_parts:
+                    pharmacy_location = f"{pharmacy_name}, {', '.join(location_parts)}"
+                else:
+                    pharmacy_location = f"{pharmacy_name}, Location"
+            except:
+                pass
+        except:
+            pharmacy_name = order_data.get('vendorName', 'Unknown Pharmacy')
+            pharmacy_location = f"{pharmacy_name}, Location"
+            pharmacy_phone = ''
+        
+        # Calculate estimated time and distance (mock for now, can be enhanced with real geolocation)
+        estimated_time = '25 mins'  # Default
+        distance = '3.2 km'  # Default
+        
+        # Calculate priority based on order age (older orders = higher priority)
+        order_age_hours = (timezone.now() - order_obj.created_at).total_seconds() / 3600
+        if order_age_hours > 2:
+            priority = 'High'
+        elif order_age_hours > 1:
+            priority = 'Medium'
+        else:
+            priority = 'Low'
+        
+        # Transform order to delivery format
+        delivery_order = {
+            'id': order_data.get('orderId'),
+            'orderId': order_data.get('orderId'),
+            'customerName': order_data.get('customerName', ''),
+            'customerPhone': order_data.get('customerPhone', ''),
+            'pharmacyName': pharmacy_name,
+            'pharmacyPhone': pharmacy_phone,
+            'pharmacyLocation': pharmacy_location,
+            'deliveryLocation': order_data.get('address', ''),
+            'estimatedTime': estimated_time,
+            'distance': distance,
+            'amount': order_data.get('total', 0),
+            'tip': 0,  # Default, can be calculated based on order value
+            'status': 'pending',
+            'priority': priority,
+            'instructions': 'Handle with care. Keep medicines in original packaging.',
+            'items': order_data.get('items', []),
+            'prescriptionRequired': order_data.get('prescriptionRequired', False),
+            'orderTime': order_data.get('orderTime', ''),
+            'vendorId': order_data.get('vendorId'),
+            'vendorName': pharmacy_name
+        }
+        
+        available_orders.append(delivery_order)
+    
+    return Response(available_orders, status=status.HTTP_200_OK)
   
 
 

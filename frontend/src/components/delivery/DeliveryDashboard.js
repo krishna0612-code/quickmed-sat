@@ -350,7 +350,7 @@ const DeliveryDashboard = ({ user, onLogout }) => {
             {
               id: Date.now(),
               type: 'order',
-              title: 'New Delivery Available',
+              title: 'New Delivery  ',
               message: `New order ${newOrderId} is available for acceptance`,
               time: 'Just now',
               read: false,

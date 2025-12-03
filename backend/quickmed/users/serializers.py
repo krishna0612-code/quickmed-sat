@@ -6,6 +6,13 @@ from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from .models import CustomUser, UserProfile, VendorProfile, DeliveryProfile, CartItem, Order
 
+# Import DoctorProfile from doctor app
+try:
+    from doctor.models import DoctorProfile
+except (ImportError, ModuleNotFoundError):
+    # If doctor app is not available, DoctorProfile will be None
+    DoctorProfile = None
+
 
 class SignupSerializer(serializers.ModelSerializer):
     class Meta:
@@ -23,7 +30,20 @@ class SignupSerializer(serializers.ModelSerializer):
         elif user.user_type == "delivery":
             DeliveryProfile.objects.create(user=user)
         elif user.user_type == "doctor":
-            DoctorProfile.objects.create(user=user)
+            # Create DoctorProfile if available
+            if DoctorProfile:
+                try:
+                    DoctorProfile.objects.create(user=user)
+                except Exception as e:
+                    # Log error but don't fail signup
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error creating DoctorProfile: {e}")
+            else:
+                # DoctorProfile not available, log warning
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning("DoctorProfile model not found, skipping profile creation")
 
         return user
 

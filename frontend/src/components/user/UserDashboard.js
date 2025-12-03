@@ -1099,53 +1099,70 @@ const UserDashboardContent = ({ user, onLogout }) => {
       if (verificationResponse.success) {
         const orderId = `ORD${Date.now()}`;
         
-        // Get vendor ID from first cart item (assuming all items are from same vendor)
-        let vendorId = null;
-        if (cart.length > 0) {
-          // Try to get vendorId from cart item
-          vendorId = cart[0].vendorId;
-          // If not in cart, try to find from medicines list
+        // Group cart items by vendor
+        const itemsByVendor = {};
+        cart.forEach(item => {
+          let vendorId = item.vendorId;
+          // If vendorId not in cart item, try to find from medicines list
           if (!vendorId) {
-            const medicine = medicines.find(m => m.id === cart[0].id);
+            const medicine = medicines.find(m => m.id === item.id);
             if (medicine && medicine.vendorId) {
               vendorId = medicine.vendorId;
             }
           }
-        }
+          
+          if (!vendorId) {
+            console.warn(`Vendor ID not found for item ${item.name}, skipping`);
+            return;
+          }
+          
+          if (!itemsByVendor[vendorId]) {
+            itemsByVendor[vendorId] = [];
+          }
+          itemsByVendor[vendorId].push(item);
+        });
         
-        if (!vendorId) {
-          console.error('Vendor ID not found. Cannot create order.');
+        const vendorIds = Object.keys(itemsByVendor);
+        if (vendorIds.length === 0) {
+          console.error('No valid vendor IDs found. Cannot create order.');
           alert('Error: Vendor information not found. Please try again.');
           setPaymentLoading(false);
           return;
         }
         
-        // Prepare order items for backend
-        const orderItems = cart.map(item => ({
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-          medicine_id: item.id
-        }));
+        console.log(`Splitting order across ${vendorIds.length} vendor(s):`, vendorIds);
         
-        // Check if prescription is required
-        const prescriptionRequired = cart.some(item => item.prescriptionRequired);
+        // Prepare orders grouped by vendor
+        const vendorOrders = vendorIds.map(vendorId => {
+          const vendorItems = itemsByVendor[vendorId];
+          const vendorTotal = vendorItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+          const vendorPrescriptionRequired = vendorItems.some(item => item.prescriptionRequired);
+          
+          return {
+            vendor_id: parseInt(vendorId),
+            delivery_type: 'home',
+            customer_name: profile?.fullName || user?.fullName || 'Customer',
+            customer_phone: profile?.phone || user?.phone || '',
+            delivery_address: profile?.address || 'Address not provided',
+            items: vendorItems.map(item => ({
+              name: item.name,
+              quantity: item.quantity,
+              price: item.price,
+              medicine_id: item.id,
+              prescriptionRequired: item.prescriptionRequired || false
+            })),
+            prescription_required: vendorPrescriptionRequired
+          };
+        });
         
-        // Save order to backend
+        // Save orders to backend (one per vendor)
         const token = localStorage.getItem('token');
         if (token) {
           try {
             const cleanedToken = token.replace(/^"|"$/g, '').trim();
             const orderData = {
-              vendor_id: vendorId,
-              delivery_type: 'home',
-              customer_name: profile?.fullName || user?.fullName || 'Customer',
-              customer_phone: profile?.phone || user?.phone || '',
-              delivery_address: profile?.address || 'Address not provided',
-              items: orderItems,
-              total_amount: getTotalPrice(),
-              payment_id: paymentResponse.razorpay_payment_id,
-              prescription_required: prescriptionRequired
+              orders: vendorOrders,  // Send multiple orders
+              payment_id: paymentResponse.razorpay_payment_id
             };
             
             const response = await fetch('http://127.0.0.1:8000/users/orders/', {
@@ -1158,69 +1175,85 @@ const UserDashboardContent = ({ user, onLogout }) => {
             });
             
             if (response.ok) {
-              const savedOrder = await response.json();
-              console.log('Order saved to backend:', savedOrder);
+              const savedOrders = await response.json();
+              console.log('Orders saved to backend:', savedOrders);
               
-              // Use saved order data
-              const newOrder = {
-                id: savedOrder.id || orderId,
-                orderId: savedOrder.orderId || orderId,
+              // Create order objects for each saved order
+              const newOrders = savedOrders.map(savedOrder => ({
+                id: savedOrder.id || `${orderId}-${savedOrder.vendorId}`,
+                orderId: savedOrder.orderId || `${orderId}-${savedOrder.vendorId}`,
                 date: savedOrder.date || new Date().toISOString().split('T')[0],
-                items: savedOrder.items || [...cart],
-                total: savedOrder.total || getTotalPrice(),
+                items: savedOrder.items || itemsByVendor[savedOrder.vendorId] || [],
+                total: savedOrder.total || 0,
                 status: savedOrder.status === 'pending' ? 'Confirmed' : savedOrder.status,
                 deliveryAddress: savedOrder.address || profile?.address || 'Address not provided',
                 paymentId: savedOrder.paymentId || paymentResponse.razorpay_payment_id,
                 trackingAvailable: true,
                 vendorId: savedOrder.vendorId,
                 vendorName: savedOrder.vendorName || 'Local Pharmacy'
-              };
+              }));
               
-              setOrders(prevOrders => [newOrder, ...prevOrders]);
+              // Add all orders to state
+              setOrders(prevOrders => [...newOrders, ...prevOrders]);
             } else {
               const errorText = await response.text();
-              console.error('Failed to save order to backend:', errorText);
-              // Still create local order even if backend save fails
-              const newOrder = {
-                id: orderId,
+              console.error('Failed to save orders to backend:', errorText);
+              // Still create local orders even if backend save fails
+              const localOrders = vendorIds.map((vendorId, idx) => {
+                const vendorItems = itemsByVendor[vendorId];
+                const vendorTotal = vendorItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                return {
+                  id: `${orderId}-V${idx + 1}`,
+                  date: new Date().toISOString().split('T')[0],
+                  items: vendorItems,
+                  total: vendorTotal,
+                  status: 'Confirmed',
+                  deliveryAddress: profile?.address || 'Address not provided',
+                  paymentId: paymentResponse.razorpay_payment_id,
+                  trackingAvailable: true,
+                  vendorId: parseInt(vendorId)
+                };
+              });
+              setOrders(prevOrders => [...localOrders, ...prevOrders]);
+            }
+          } catch (error) {
+            console.error('Error saving orders to backend:', error);
+            // Still create local orders
+            const localOrders = vendorIds.map((vendorId, idx) => {
+              const vendorItems = itemsByVendor[vendorId];
+              const vendorTotal = vendorItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+              return {
+                id: `${orderId}-V${idx + 1}`,
                 date: new Date().toISOString().split('T')[0],
-                items: [...cart],
-                total: getTotalPrice(),
+                items: vendorItems,
+                total: vendorTotal,
                 status: 'Confirmed',
                 deliveryAddress: profile?.address || 'Address not provided',
                 paymentId: paymentResponse.razorpay_payment_id,
-                trackingAvailable: true
+                trackingAvailable: true,
+                vendorId: parseInt(vendorId)
               };
-              setOrders(prevOrders => [newOrder, ...prevOrders]);
-            }
-          } catch (error) {
-            console.error('Error saving order to backend:', error);
-            // Still create local order
-            const newOrder = {
-              id: orderId,
+            });
+            setOrders(prevOrders => [...localOrders, ...prevOrders]);
+          }
+        } else {
+          // No token - create local orders only
+          const localOrders = vendorIds.map((vendorId, idx) => {
+            const vendorItems = itemsByVendor[vendorId];
+            const vendorTotal = vendorItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            return {
+              id: `${orderId}-V${idx + 1}`,
               date: new Date().toISOString().split('T')[0],
-              items: [...cart],
-              total: getTotalPrice(),
+              items: vendorItems,
+              total: vendorTotal,
               status: 'Confirmed',
               deliveryAddress: profile?.address || 'Address not provided',
               paymentId: paymentResponse.razorpay_payment_id,
-              trackingAvailable: true
+              trackingAvailable: true,
+              vendorId: parseInt(vendorId)
             };
-            setOrders(prevOrders => [newOrder, ...prevOrders]);
-          }
-        } else {
-          // No token - create local order only
-          const newOrder = {
-            id: orderId,
-            date: new Date().toISOString().split('T')[0],
-            items: [...cart],
-            total: getTotalPrice(),
-            status: 'Confirmed',
-            deliveryAddress: profile?.address || 'Address not provided',
-            paymentId: paymentResponse.razorpay_payment_id,
-            trackingAvailable: true
-          };
-          setOrders(prevOrders => [newOrder, ...prevOrders]);
+          });
+          setOrders(prevOrders => [...localOrders, ...prevOrders]);
         }
         
         // Clear cart after successful order
@@ -1247,8 +1280,13 @@ const UserDashboardContent = ({ user, onLogout }) => {
         
         safeSetActiveView('orders');
         
-        addNotification('Order Confirmed', `Your order ${orderId} has been placed successfully`, 'order');
-        alert(`Payment successful! Order ID: ${orderId}\nPayment ID: ${paymentResponse.razorpay_payment_id}`);
+        const orderCount = vendorIds.length;
+        const orderMessage = orderCount > 1 
+          ? `Your order has been split into ${orderCount} separate orders (one per vendor)`
+          : `Your order ${orderId} has been placed successfully`;
+        
+        addNotification('Order Confirmed', orderMessage, 'order');
+        alert(`Payment successful! ${orderCount > 1 ? `${orderCount} orders created` : `Order ID: ${orderId}`}\nPayment ID: ${paymentResponse.razorpay_payment_id}`);
       } else {
         alert('Payment verification failed. Please contact support.');
       }

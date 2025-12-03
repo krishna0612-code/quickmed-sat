@@ -1326,10 +1326,23 @@ const Signup = ({ onSwitchToLogin, onSignupSuccess, onBackToHome }) => {
         }),
       });
 
-      const data = await response.json();
+      // Check if response is JSON before parsing
+      const contentType = response.headers.get("content-type");
+      let data;
+      
+      if (contentType && contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        // If response is not JSON (e.g., HTML error page), get text
+        const text = await response.text();
+        console.error("Non-JSON response received:", text.substring(0, 200));
+        throw new Error("Server returned an invalid response. Please try again.");
+      }
 
       if (!response.ok) {
-        throw new Error(data.message || "Signup failed");
+        // Handle error response
+        const errorMessage = data.message || data.error || data.detail || "Signup failed";
+        throw new Error(errorMessage);
       }
 
       if (data.message === "Account created successfully") {

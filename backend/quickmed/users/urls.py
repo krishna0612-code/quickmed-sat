@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     signup, login_user, vendor_profile, 
     cart_items, cart_item_detail,
-    create_order, user_orders, vendor_orders, update_order_status
+    create_order, user_orders, vendor_orders, update_order_status, delivery_available_orders
 )
 
 urlpatterns = [
@@ -14,6 +14,7 @@ urlpatterns = [
     path("orders/", create_order, name="create_order"),
     path("orders/my/", user_orders, name="user_orders"),
     path("orders/vendor/", vendor_orders, name="vendor_orders"),
+    path("orders/delivery/available/", delivery_available_orders, name="delivery_available_orders"),
     path("orders/<str:order_id>/status/", update_order_status, name="update_order_status"),
     # path("doctors/", list_doctors), 
    

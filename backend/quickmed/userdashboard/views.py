@@ -30,7 +30,8 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import Appointment
-from .serializers import AppointmentSerializer
+from .serializers import AppointmentSerializer, UserProfileSerializer
+from users.models import UserProfile
 
 class MyAppointmentsListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -91,5 +92,110 @@ class BookAppointmentView(APIView):
                     "error": "Internal server error",
                     "detail": str(e)
                 },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class MyUserProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get user profile for the authenticated user.
+        Creates profile if it doesn't exist.
+        """
+        try:
+            # Only allow users to access this endpoint
+            if request.user.user_type != 'user':
+                return Response(
+                    {'error': 'Only users can access this endpoint'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            profile, created = UserProfile.objects.get_or_create(user=request.user)
+            
+            # If newly created, sync with user data
+            if created:
+                profile.save()
+            
+            serializer = UserProfileSerializer(profile, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in MyUserProfileView GET: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'An error occurred while fetching profile', 'detail': str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def patch(self, request):
+        """
+        Update user profile (partial update).
+        """
+        try:
+            # Only allow users to access this endpoint
+            if request.user.user_type != 'user':
+                return Response(
+                    {'error': 'Only users can access this endpoint'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            profile, created = UserProfile.objects.get_or_create(user=request.user)
+            
+            # Prepare data for serializer - handle dateOfBirth conversion
+            serializer_data = request.data.copy()
+            
+            # Calculate age if date_of_birth is provided
+            date_of_birth = serializer_data.get('dateOfBirth') or serializer_data.get('date_of_birth')
+            if date_of_birth and date_of_birth != '':
+                from datetime import datetime, date
+                try:
+                    if isinstance(date_of_birth, str):
+                        dob = datetime.strptime(date_of_birth, '%Y-%m-%d').date()
+                    else:
+                        dob = date_of_birth
+                    
+                    today = date.today()
+                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                    serializer_data['age'] = age
+                except Exception as e:
+                    print(f"Error calculating age: {e}")
+                    # Don't fail if age calculation fails, just skip it
+            
+            # Handle empty strings - convert to None for optional fields
+            for key in ['address', 'city', 'pincode', 'gender', 'dateOfBirth']:
+                if key in serializer_data and serializer_data[key] == '':
+                    serializer_data[key] = None
+            
+            # Handle age - convert empty string to None
+            if 'age' in serializer_data:
+                if serializer_data['age'] == '' or serializer_data['age'] is None:
+                    serializer_data['age'] = None
+                elif isinstance(serializer_data['age'], str):
+                    try:
+                        serializer_data['age'] = int(serializer_data['age'])
+                    except (ValueError, TypeError):
+                        serializer_data['age'] = None
+            
+            serializer = UserProfileSerializer(instance=profile, data=serializer_data, partial=True, context={'request': request})
+            
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            
+            # Log validation errors for debugging
+            print(f"Serializer validation errors: {serializer.errors}")
+            print(f"Data sent to serializer: {serializer_data}")
+            
+            return Response(
+                {'error': 'Validation failed', 'errors': serializer.errors, 'detail': 'Please check the provided data'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in MyUserProfileView PATCH: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'An error occurred while updating profile', 'detail': str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

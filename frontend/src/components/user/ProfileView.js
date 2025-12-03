@@ -655,6 +655,7 @@ const ProfileView = ({ setActiveView }) => {
         lastUpdated: new Date().toISOString()
       };
 
+      // This will save to both backend and update local state
       await updateProfile(updatedProfile);
       
       // Show success message
@@ -668,7 +669,14 @@ const ProfileView = ({ setActiveView }) => {
       }, 5000);
     } catch (error) {
       console.error('Profile update error:', error);
-      setSaveStatus('❌ Error updating profile. Please try again.');
+      // Show the actual error message from backend if available
+      const errorMessage = error.message || 'Error updating profile. Please try again.';
+      setSaveStatus(`❌ ${errorMessage}`);
+      
+      // Keep error message visible longer for validation errors
+      setTimeout(() => {
+        setSaveStatus('');
+      }, 8000);
     } finally {
       setIsSubmitting(false);
     }
