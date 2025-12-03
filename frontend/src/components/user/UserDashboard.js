@@ -506,9 +506,16 @@ const UserDashboardContent = ({ user, onLogout }) => {
     }
   }, []);
 
-  // Fetch medicines on component mount
+  // Fetch medicines on component mount and poll periodically
   useEffect(() => {
     fetchMedicines();
+    
+    // Poll every 15 seconds to get new medicines added by vendors
+    const pollInterval = setInterval(() => {
+      fetchMedicines();
+    }, 15000); // Poll every 15 seconds
+    
+    return () => clearInterval(pollInterval);
   }, [fetchMedicines]);
 
   // Initialize appointment props
@@ -2185,6 +2192,7 @@ const UserDashboardContent = ({ user, onLogout }) => {
             addToCart={addToCart}
             updateQuantity={updateQuantity}
             setActiveView={safeSetActiveView}
+            isLoadingMedicines={isLoadingMedicines}
           />
         )}
         {activeView === 'cart' && (

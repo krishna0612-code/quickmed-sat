@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 
 const Products = ({ 
   searchQuery, 
@@ -8,7 +8,8 @@ const Products = ({
   cart, 
   addToCart, 
   updateQuantity, 
-  setActiveView 
+  setActiveView,
+  isLoadingMedicines = false
 }) => {
   const [selectedCategory, setSelectedCategory] = useState('all');
 
@@ -280,351 +281,69 @@ const Products = ({
     }
   };
 
-  // Enhanced medicine data with detailed information
-  const enhancedMedicines = [
-    {
-      id: 1,
-      name: 'Aspirin 75mg',
-      brand: 'Bayer',
-      price: 25,
-      vendor: 'WellCare Store',
-      category: 'Pain Relief',
-      description: 'Low-dose aspirin for heart health and pain relief',
-      detailedDescription: 'Aspirin is a salicylate drug that works by reducing substances in the body that cause pain, fever, and inflammation. Low-dose aspirin (75mg) is commonly used for cardiovascular protection.',
-      uses: [
-        'Prevention of heart attacks and strokes',
-        'Mild to moderate pain relief',
-        'Reduction of fever and inflammation'
-      ],
-      dosage: 'Take one tablet daily with food as directed by your doctor',
-      sideEffects: [
-        'Stomach upset',
-        'Heartburn',
-        'Mild headache'
-      ],
-      precautions: [
-        'Do not take if allergic to aspirin',
-        'Consult doctor before surgery',
-        'Avoid alcohol consumption'
-      ],
-      image: '',
-      prescriptionRequired: false,
-      stock: 50,
-      rating: 4.5,
-      reviews: 128
-    },
-    {
-      id: 2,
-      name: 'Paracetamol 500mg',
-      brand: 'Crocin',
-      price: 30,
-      vendor: 'City Pharmacy',
-      category: 'Fever & Pain',
-      description: 'Effective relief from fever and mild pain',
-      detailedDescription: 'Paracetamol (acetaminophen) is a common pain reliever and fever reducer. It works by affecting the areas of the brain that receive pain signals and regulate body temperature.',
-      uses: [
-        'Fever reduction',
-        'Headache relief',
-        'Muscle aches and pains',
-        'Arthritis pain'
-      ],
-      dosage: '1-2 tablets every 4-6 hours as needed, maximum 8 tablets in 24 hours',
-      sideEffects: [
-        'Rare when taken as directed',
-        'Allergic reactions in sensitive individuals',
-        'Liver damage with overdose'
-      ],
-      precautions: [
-        'Do not exceed recommended dosage',
-        'Consult doctor for liver conditions',
-        'Avoid with alcohol'
-      ],
-      image: '',
-      prescriptionRequired: false,
-      stock: 100,
-      rating: 4.7,
-      reviews: 256
-    },
-    {
-      id: 3,
-      name: 'Ibuprofen 400mg',
-      brand: 'Brufen',
-      price: 35,
-      vendor: 'HealthPlus Medicines',
-      category: 'Pain Relief',
-      description: 'Anti-inflammatory pain reliever for various conditions',
-      detailedDescription: 'Ibuprofen is a nonsteroidal anti-inflammatory drug (NSAID) that works by reducing hormones that cause inflammation and pain in the body. Effective for various inflammatory conditions.',
-      uses: [
-        'Arthritis pain and inflammation',
-        'Muscle aches',
-        'Menstrual cramps',
-        'Dental pain'
-      ],
-      dosage: 'One tablet every 6-8 hours with food, maximum 1200mg per day',
-      sideEffects: [
-        'Stomach upset',
-        'Heartburn',
-        'Dizziness',
-        'Increased blood pressure'
-      ],
-      precautions: [
-        'Take with food or milk',
-        'Avoid in third trimester of pregnancy',
-        'Consult for kidney problems'
-      ],
-      image: '',
-      prescriptionRequired: false,
-      stock: 75,
-      rating: 4.4,
-      reviews: 189
-    },
-    {
-      id: 4,
-      name: 'Vitamin C 1000mg',
-      brand: 'NatureMade',
-      price: 40,
-      vendor: 'WellCare Store',
-      category: 'Vitamins & Supplements',
-      description: 'High-potency Vitamin C for immune support',
-      detailedDescription: 'Vitamin C (ascorbic acid) is a water-soluble vitamin essential for growth and development. It helps the body form collagen, absorb iron, and maintain healthy bones, teeth, and immune system.',
-      uses: [
-        'Immune system support',
-        'Collagen production',
-        'Antioxidant protection',
-        'Iron absorption'
-      ],
-      dosage: 'One tablet daily with a meal',
-      sideEffects: [
-        'Mild diarrhea in high doses',
-        'Stomach cramps',
-        'Nausea'
-      ],
-      precautions: [
-        'Consult for kidney stones history',
-        'May interact with chemotherapy',
-        'Store in cool dry place'
-      ],
-      image: '',
-      prescriptionRequired: false,
-      stock: 200,
-      rating: 4.8,
-      reviews: 342
-    },
-    {
-      id: 5,
-      name: 'Amoxicillin 500mg',
-      brand: 'Amoxil',
-      price: 120,
-      vendor: 'City Pharmacy',
-      category: 'Antibiotics',
-      description: 'Broad-spectrum antibiotic for bacterial infections',
-      detailedDescription: 'Amoxicillin is a penicillin-type antibiotic that fights bacteria in the body. It is used to treat many different types of infections caused by bacteria, such as ear infections, bladder infections, pneumonia, and more.',
-      uses: [
-        'Bacterial infections',
-        'Respiratory tract infections',
-        'Urinary tract infections',
-        'Skin infections'
-      ],
-      dosage: 'As prescribed by doctor, typically one capsule three times daily',
-      sideEffects: [
-        'Nausea',
-        'Diarrhea',
-        'Skin rash',
-        'Yeast infection'
-      ],
-      precautions: [
-        'PRESCRIPTION REQUIRED',
-        'Complete full course',
-        'Inform about penicillin allergy',
-        'Take with plenty of water'
-      ],
-      image: '',
-      prescriptionRequired: true,
-      stock: 30,
-      rating: 4.3,
-      reviews: 95
-    },
-    {
-      id: 6,
-      name: 'Blood Pressure Monitor',
-      brand: 'Omron',
-      price: 899,
-      vendor: 'HealthPlus Medicines',
-      category: 'Medical Equipment',
-      description: 'Digital automatic blood pressure monitor',
-      detailedDescription: 'Professional-grade digital blood pressure monitor with advanced accuracy. Features easy-to-read display, irregular heartbeat detector, and memory function for tracking readings over time.',
-      uses: [
-        'Home blood pressure monitoring',
-        'Hypertension management',
-        'Health tracking',
-        'Doctor consultation support'
-      ],
-      features: [
-        'One-touch operation',
-        '90-reading memory',
-        'Irregular heartbeat detection',
-        'WHO classification indicator'
-      ],
-      specifications: [
-        'Cuff size: 22-32cm',
-        'Battery operated',
-        '2-year warranty',
-        'Clinically validated'
-      ],
-      image: '',
-      prescriptionRequired: false,
-      stock: 25,
-      rating: 4.6,
-      reviews: 167
-    },
-    {
-      id: 7,
-      name: 'Cetirizine 10mg',
-      brand: 'Zyrtec',
-      price: 25,
-      vendor: 'City Pharmacy',
-      category: 'Allergy',
-      description: '24-hour allergy relief without drowsiness',
-      detailedDescription: 'Cetirizine is an antihistamine that reduces the effects of natural chemical histamine in the body. Histamine can produce symptoms of sneezing, itching, watery eyes, and runny nose.',
-      uses: [
-        'Seasonal allergies',
-        'Hay fever',
-        'Chronic urticaria',
-        'Allergic skin reactions'
-      ],
-      dosage: 'One tablet daily, with or without food',
-      sideEffects: [
-        'Dry mouth',
-        'Mild drowsiness (rare)',
-        'Headache',
-        'Sore throat'
-      ],
-      precautions: [
-        'Avoid alcohol',
-        'Consult for kidney problems',
-        'Safe for long-term use'
-      ],
-      image: '',
-      prescriptionRequired: false,
-      stock: 80,
-      rating: 4.5,
-      reviews: 214
-    },
-    {
-      id: 8,
-      name: 'Omeprazole 20mg',
-      brand: 'Prilosec',
-      price: 45,
-      vendor: 'City Pharmacy',
-      category: 'Acid Reducer',
-      description: 'Proton pump inhibitor for acid reflux',
-      detailedDescription: 'Omeprazole is a proton pump inhibitor that decreases the amount of acid produced in the stomach. It is used to treat symptoms of GERD and other conditions caused by excess stomach acid.',
-      uses: [
-        'GERD (gastroesophageal reflux disease)',
-        'Stomach ulcers',
-        'Zollinger-Ellison syndrome',
-        'Erosive esophagitis'
-      ],
-      dosage: 'One capsule daily before eating, usually for 4-8 weeks',
-      sideEffects: [
-        'Headache',
-        'Diarrhea',
-        'Stomach pain',
-        'Nausea'
-      ],
-      precautions: [
-        'Take before meals',
-        'Do not crush or chew',
-        'Long-term use requires monitoring',
-        'May affect vitamin B12 absorption'
-      ],
-      image: '',
-      prescriptionRequired: true,
-      stock: 40,
-      rating: 4.2,
-      reviews: 178
-    },
-    {
-      id: 9,
-      name: 'Multivitamin Tablets',
-      brand: 'Centrum',
-      price: 150,
-      vendor: 'WellCare Store',
-      category: 'Vitamins & Supplements',
-      description: 'Complete daily multivitamin for adults',
-      detailedDescription: 'Comprehensive multivitamin formula containing essential vitamins and minerals to support overall health, energy production, immune function, and cellular protection.',
-      uses: [
-        'Daily nutritional support',
-        'Energy production',
-        'Immune system function',
-        'Bone and eye health'
-      ],
-      keyIngredients: [
-        'Vitamin A, C, D, E',
-        'B-complex vitamins',
-        'Calcium and Magnesium',
-        'Zinc and Selenium'
-      ],
-      dosage: 'One tablet daily with a meal',
-      sideEffects: [
-        'Mild stomach upset',
-        'Constipation',
-        'Unusual taste'
-      ],
-      precautions: [
-        'Keep out of reach of children',
-        'Do not exceed recommended dose',
-        'Consult if pregnant or nursing'
-      ],
-      image: '',
-      prescriptionRequired: false,
-      stock: 150,
-      rating: 4.7,
-      reviews: 289
-    },
-    {
-      id: 10,
-      name: 'Calcium Supplements',
-      brand: 'Caltrate',
-      price: 200,
-      vendor: 'WellCare Store',
-      category: 'Vitamins & Supplements',
-      description: 'Calcium with Vitamin D for bone health',
-      detailedDescription: 'Advanced calcium supplement with Vitamin D3 to support bone density and strength. Essential for maintaining healthy bones and teeth, and preventing osteoporosis.',
-      uses: [
-        'Bone health maintenance',
-        'Osteoporosis prevention',
-        'Dental health',
-        'Muscle function'
-      ],
-      dosage: 'One tablet twice daily with meals',
-      sideEffects: [
-        'Constipation',
-        'Gas and bloating',
-        'Stomach upset'
-      ],
-      precautions: [
-        'Take with plenty of water',
-        'Space from other medications',
-        'Consult for kidney stones'
-      ],
-      image: '',
-      prescriptionRequired: false,
-      stock: 90,
-      rating: 4.4,
-      reviews: 156
+  // Map backend medicines to frontend format with enhanced details
+  // Use medicines prop from UserDashboard (fetched from backend) instead of static data
+  const enhancedMedicines = useMemo(() => {
+    if (!medicines || medicines.length === 0) {
+      return [];
     }
-  ];
 
-  const categories = ['all', ...new Set(enhancedMedicines.map(medicine => medicine.category))];
+    // Map backend medicine format to frontend format
+    return medicines.map(med => {
+      // Generate a brand name from medicine name or use vendor name
+      const brandName = med.name.split(' ')[0] || 'Generic';
+      
+      // Generate description based on category
+      const categoryDescriptions = {
+        'Pain Relief': 'Effective pain relief for various conditions',
+        'Fever & Pain': 'Relief from fever and mild to moderate pain',
+        'Vitamins & Supplements': 'Essential vitamins and minerals for health',
+        'Antibiotics': 'Broad-spectrum antibiotic for bacterial infections',
+        'Medical Equipment': 'Professional medical equipment for home use',
+        'Allergy': '24-hour allergy relief without drowsiness',
+        'Acid Reducer': 'Proton pump inhibitor for acid reflux',
+        'cold': 'Relief from cold symptoms',
+        'drug': 'Medication for various conditions',
+        'fever': 'Fever reduction and pain relief'
+      };
+      
+      const description = med.description || categoryDescriptions[med.category] || `${med.name} - ${med.category}`;
+      
+      return {
+        id: med.id,
+        name: med.name,
+        brand: brandName,
+        price: parseFloat(med.price) || 0,
+        vendor: med.vendor || 'Unknown Vendor',
+        vendorId: med.vendorId || null,
+        category: med.category || 'General',
+        description: description,
+        prescriptionRequired: med.prescriptionRequired || false,
+        stock: med.quantity || med.stock || 0,
+        // Add default values for optional fields
+        rating: 4.5,
+        reviews: Math.floor(Math.random() * 200) + 50
+      };
+    });
+  }, [medicines]);
 
-  const filteredProducts = enhancedMedicines.filter(medicine => {
-    const matchesSearch = medicine.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         medicine.brand.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         medicine.category.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || medicine.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
+  // Dynamically generate categories from fetched medicines
+  const categories = useMemo(() => {
+    const uniqueCategories = new Set(enhancedMedicines.map(medicine => medicine.category));
+    return ['all', ...Array.from(uniqueCategories).sort()];
+  }, [enhancedMedicines]);
+
+  // Filter products based on search query and selected category
+  const filteredProducts = useMemo(() => {
+    return enhancedMedicines.filter(medicine => {
+      const matchesSearch = medicine.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           (medicine.brand && medicine.brand.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                           medicine.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           (medicine.vendor && medicine.vendor.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesCategory = selectedCategory === 'all' || medicine.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [enhancedMedicines, searchQuery, selectedCategory]);
 
   const addToCartWithNotification = (product) => {
     addToCart(product);
